@@ -85,6 +85,35 @@ The rubber chicken concept serves as an engaging demonstration tool for:
   - Bellows system for precise suction detection
   - Custom mouthpiece designs
 
+#### Optional Display Connectors
+
+> Both connectors are unpopulated PCB footprints — built-in hardware support with no board redesign needed to add displays later.
+
+##### J1 — I²C OLED Display (1", 128×64)
+- **Connector**: 4-pin 2.54 mm Dupont header on PCB
+- **Display type**: 1" 128×64 OLED, SSD1306 controller (or compatible)
+- **Interface**: I²C — shares existing GPIO 4 (SDA) / GPIO 5 (SCL) bus with the LPS28DFWTR sensor
+- **I²C address**: 0x3C (default) or 0x3D — no conflict with LPS28DFWTR at 0x5C/0x5D
+- **Supply**: 3.3V
+- **Pin order (1→4)**: GND → VCC → SCL → SDA
+- **Use case**: Status readout, sip/puff feedback, pressure level bar graph
+
+##### J2 — SPI Color LCD Display (2"–4")
+- **Connector**: 9-pin 2.54 mm Dupont header on PCB
+- **Display type**: 2"–4" color TFT LCD, ST7789 or ILI9341 controller (or compatible)
+- **Interface**: SPI1 hardware peripheral on dedicated non-analog GPIO pins
+- **GPIO assignments**:
+  - GPIO 10 — SCK (SPI1 clock)
+  - GPIO 11 — MOSI / SDI (SPI1 TX)
+  - GPIO 12 — MISO / SDO (SPI1 RX, optional)
+  - GPIO 13 — CS (chip select, active low)
+  - GPIO 14 — DC/RS (high = data, low = command)
+  - GPIO 15 — RESET (active low)
+  - GPIO 16 — LED (backlight PWM; solder bridge for always-on 3.3V)
+- **Pin order (1→9)**: VCC → GND → CS → RESET → DC/RS → MOSI → SCK → LED → MISO
+- **Supply**: 3.3V
+- **Use case**: Full-color rubber chicken game interface, animated demo display
+
 #### Power Supply
 - **Battery Option**: PCB designed to accommodate battery but not populated (user-selectable)
 - **Optional LDO Power Supply**: For chair-based installations at events
