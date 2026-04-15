@@ -1,3 +1,28 @@
+## Component Datasheets
+
+### Default Pressure Sensor: LPS28DFWTR
+- **Manufacturer**: STMicroelectronics
+- **Description**: MEMS nano pressure sensor — water-resistant, 24-bit, I²C, 0.32 Pa noise, CCLGA-7L SMD package (2.8 × 2.8 × 1.95 mm), rated 10 ATM, 1.7 µA idle current
+- **Document**: DS13317 Rev 1, December 2021
+- **Datasheet**: [ST Product Page & Datasheet (DS13317)](https://www.st.com/en/mems-and-sensors/lps28dfw.html)
+- **Direct PDF**: [DS13317 Datasheet PDF](https://www.st.com/resource/en/datasheet/lps28dfw.pdf)
+- **Key parameters for this project**:
+  - I²C address: 0x5C (SA0 → GND) or 0x5D (SA0 → VDD)
+  - GPIO connections: SDA → GPIO 4, SCL → GPIO 5, INT_DRDY → GPIO 6 (optional)
+  - Pull-ups: 10 kΩ on SDA and SCL to 3.3V
+  - Decoupling: 100 nF ceramic cap between VDD and GND
+
+### Alternative Pressure Sensor: MPX5010DP
+- **Manufacturer**: NXP Semiconductors (formerly Freescale)
+- **Description**: Integrated silicon pressure sensor, 0–10 kPa differential, analog voltage output, through-hole SIP-6 package
+- **Datasheet**: [MPX5010 Series Datasheet](https://www.nxp.com/docs/en/data-sheet/MPX5010.pdf)
+- **Key parameters for this project**:
+  - Output: Analog voltage (0.2–4.7V at 5V; scales at 3.3V) — connects to GPIO 26 (ADC0)
+  - **NOT I²C** — analog only
+  - Accuracy: ±1.5% FS
+
+---
+
 ## Related Open Source Projects
 
 This project builds upon and is inspired by several existing open source sip and puff implementations. The following projects have influenced the design and functionality of this system:

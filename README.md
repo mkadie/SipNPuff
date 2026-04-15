@@ -30,14 +30,34 @@ The rubber chicken concept serves as an engaging demonstration tool for:
 ### Primary Components
 
 #### Sensors
-- **MPX5010DP Pressure Sensor**: Selected for its wide pressure range (0-100 kPa), digital output capabilities, and cost-effectiveness
-- **Sensor Specifications**: 
-  - Pressure range: 0-100 kPa
-  - Output: Digital I2C interface
-  - Supply voltage: 2.7-5.5V
-  - Power consumption: <100μA
-  - Accuracy: ±1.5% FS
-- **Sensor Placement**: Positioned to detect pressure changes from both suction and blowing actions with proper airflow management
+
+> **PCB Strategy:** Initial PCBs support both sensor footprints simultaneously. After real-world testing, separate PCB variants (SMD-only and through-hole) will be produced.
+
+##### Default Sensor: LPS28DFWTR (SMD — I²C digital)
+- **Part:** STMicroelectronics LPS28DFWTR
+- **Package:** CCLGA-7L, 2.8 × 2.8 × 1.95 mm — SMD only, requires reflow or hot-air soldering
+- **Why it's default:** Water-resistant package (potting gel, rated 10 ATM), 24-bit resolution, ultra-low noise (0.32 Pa), factory-calibrated, I²C interface, embedded FIFO, interrupt output, and 1.7 µA idle current
+- **Interface:** I²C (up to 400 kHz fast mode; 1 MHz fast mode+) — connects directly to Pico W I²C bus
+- **I²C address:** 0x5C (SA0 pin → GND) or 0x5D (SA0 pin → VDD) — selectable via PCB solder bridge
+- **Pressure range:** Mode 1: 260–1260 hPa (optimised for sip/puff); Mode 2: 260–4060 hPa
+- **Pressure noise:** 0.32 Pa RMS (Mode 1) — more than sufficient for breath detection
+- **Accuracy:** ±0.5 hPa absolute, ±0.015 hPa relative
+- **ODR:** 1–200 Hz (software configurable)
+- **Supply voltage:** 1.7 to 3.6 V (3.3V from Pico W is within spec)
+- **Interrupt:** INT_DRDY pin — data-ready interrupt for efficient polling
+- **Datasheet:** DS13317 Rev 1, December 2021 (ST Microelectronics)
+- **Sensor Placement:** Positioned in breath path between mouthpiece filter and PCB; water-resistant package tolerates condensation exposure
+
+##### Alternative Sensor: MPX5010DP (Through-Hole — Analog output)
+- **Part:** NXP/Freescale MPX5010DP
+- **Package:** Through-hole SIP-6 — can be hand-soldered without SMD equipment
+- **Why it's an alternative:** Easier to hand-solder for early prototypes and events; no SMD tools required
+- **Interface:** **Analog voltage output** (0.2V–4.7V at 5V supply) — connects to a Pico ADC pin, **NOT I²C**
+- **Pressure range:** 0–10 kPa differential
+- **Supply voltage:** 2.7–5.5V (note: at 3.3V supply the output range scales; verify output headroom in firmware)
+- **Accuracy:** ±1.5% FS
+- **Power consumption:** ~6 mA typical (significantly higher than LPS28DFWTR)
+- **Sensor Placement:** Same breath-path position; analog output wire routes to GPIO 26 (ADC0) on Pico W
 
 #### Microcontroller
 - **Raspberry Pi RP2040**: Chosen for its cost-effectiveness ($4), dual-core ARM Cortex-M0+ processor, and sufficient processing power for signal conditioning
@@ -78,7 +98,7 @@ The rubber chicken concept serves as an engaging demonstration tool for:
   - Battery life: >20 hours continuous operation
 
 ### Cost Analysis
-- **Sensors**: ~$3-5
+- **Sensors**: ~$3-6 (LPS28DFWTR ~$4-6 SMD; MPX5010DP ~$3-5 through-hole)
 - **Microcontroller**: ~$4 (RP2040)
 - **Mechanical Components**: ~$5-10
 - **Enclosure Materials**: ~$5-10
@@ -95,7 +115,7 @@ The rubber chicken concept serves as an engaging demonstration tool for:
 
 The system operates as a reliable, functional sip and puff interface with the following core features:
 
-1. **Pressure Sensing**: Continuous monitoring of MPX5010DP sensor data with filtering
+1. **Pressure Sensing**: Continuous monitoring of pressure sensor data with filtering — I²C polling (LPS28DFWTR default) or ADC sampling (MPX5010DP alternative)
 2. **Input Classification**: Distinguishing between sip and puff actions with threshold detection
 3. **Signal Processing**: Debouncing and smoothing of pressure readings
 4. **Command Generation**: Converting pressure inputs into actionable commands
@@ -118,7 +138,7 @@ The system operates as a reliable, functional sip and puff interface with the fo
   - Voltage level representation of pressure
   - Proportional response for advanced applications
 - **Communication Protocols**: 
-  - I2C for sensor communication
+  - I2C for LPS28DFWTR sensor communication (default); ADC for MPX5010DP (alternative)
   - UART for serial data transfer
   - USB for PC connectivity
 
