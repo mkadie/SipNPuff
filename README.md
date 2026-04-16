@@ -5,20 +5,49 @@
 
 This project implements a functional sip and puff switch interface that serves as both a demonstration system (using rubber chickens) and a working, low-cost ($25-50) sip and puff device for accessibility applications. The core functionality focuses on creating a reliable, accessible interface while using the rubber chicken concept as an engaging demonstration tool for normally abled users.
 
+---
+
+## ⭐ Primary Claim to Fame: One Build, Many Purposes — Text File Configuration
+
+> **The defining characteristic of this project is flexibility.**
+
+Most open-source sip and puff devices are purpose-built for a single output: a USB mouse, a keyboard emulator, or a specific AT protocol. Changing what the device *does* means reflashing firmware or editing code. This project takes a different approach: **a single hardware build and a single firmware image that can be reconfigured for completely different tasks by editing a plain text configuration file** — no compiler, no IDE, no programmer required.
+
+A clinician, caregiver, or technically capable user can open the config file (accessible as a USB drive when the device is plugged in) and change:
+- What a sip or puff event maps to (keypress, mouse button, joystick axis, HID consumer control, serial command, etc.)
+- Sensitivity thresholds for sip and puff, independently
+- Operating mode (USB HID mouse, USB HID keyboard, XAC gamepad output, serial AT command relay, etc.)
+- Head-tracking parameters (dead zone, speed curve, re-centre trigger gesture)
+- Display content and feedback behaviour
+
+The same physical device can serve as:
+- A USB mouse (head tracking + sip/puff clicks)
+- A two-switch keyboard input (sip = one key, puff = another)
+- An Xbox Adaptive Controller input (via the onboard TRRS jacks)
+- A demonstration interface (rubber chicken mode for Maker faires)
+- A research data collection tool (with optional microSD logging)
+
+No other project in the open-source sip and puff space offers this level of reconfigurability without touching firmware. This is intentional and is the core design goal that drives decisions about display hardware, the EXTERNAL_IO connector, STEMMA QT expansion, and the overall software architecture.
+
+---
+
 ## Project Stage
 
 Early, rapid development for prototype by Maker event, which one ... hopefully the next one :)
 
 ## Core Mission
 
-### Primary Focus: Functional Accessibility Interface
+### Primary Focus: Flexibility Through Text File Configuration
+The defining goal is a single hardware and software build that can be reconfigured for a wide range of tasks by editing a plain text config file — no reflashing, no coding skills required. The same device adapts to the user, rather than requiring the user to adapt to a fixed device behavior.
+
+### Secondary Focus: Functional Accessibility Interface
 The main objective is to develop a robust, affordable sip and puff switch system that can be used for:
 - Assistive technology for individuals with motor disabilities
 - Accessibility solutions for communication devices
 - Research in human-computer interaction
 - Educational demonstrations in accessibility technology
 
-### Secondary Focus: Demonstration and Engagement
+### Tertiary Focus: Demonstration and Engagement
 The rubber chicken concept serves as an engaging demonstration tool for:
 - Maker faires and community events
 - Educational outreach programs
@@ -114,6 +143,18 @@ The rubber chicken concept serves as an engaging demonstration tool for:
 - **Supply**: 3.3V
 - **Use case**: Full-color rubber chicken game interface, animated demo display
 
+#### Circuit Protection
+
+> **A commonly overlooked step in open-source hardware projects, including many assistive technology designs.** External-facing I/O lines that connect to the real world — connectors, encoder inputs, expansion ports — are exposed to ESD events and electrical transients. Protecting the microcontroller's GPIO pins from these events is straightforward and inexpensive; skipping it is a common cause of latent damage in both hobby and clinical builds.
+
+- **IC:** SP724AHTG — low-capacitance TVS (transient voltage suppressor) diode array, STMicroelectronics
+- **Coverage:** All external-facing I/O lines **not** already protected by opto-isolation:
+  - EXTERNAL_IO connector: BUTTON (GPIO 20), ROT_A (GPIO 18), ROT_B (GPIO 19), SDA (GPIO 4), SCL (GPIO 5)
+  - STEMMA QT expansion port (SDA, SCL)
+  - Display connectors J1 and J2 signal lines as applicable
+- **Not needed on:** GPIO 0 (SIP_ENABLE) and GPIO 1 (PUF_ENABLE) — these are already isolated by PC817SC optocouplers before reaching the TRRS jacks
+- **Why SP724AHTG:** Low capacitance preserves signal integrity on I²C and SPI lines; small package; single IC can protect multiple lines simultaneously; ~$0.30–0.50 per IC in single-unit quantities
+
 #### Power Supply
 - **Battery Option**: PCB designed to accommodate battery but not populated (user-selectable)
 - **Optional LDO Power Supply**: For chair-based installations at events
@@ -129,6 +170,7 @@ The rubber chicken concept serves as an engaging demonstration tool for:
 ### Cost Analysis
 - **Sensors**: ~$3-6 (LPS28DFWTR ~$4-6 SMD; MPX5010DP ~$3-5 through-hole)
 - **Microcontroller**: ~$4 (RP2040)
+- **Circuit Protection ICs**: ~$1-2 (SP724AHTG × 2–3 units)
 - **Mechanical Components**: ~$5-10
 - **Enclosure Materials**: ~$5-10
 - **Miscellaneous Components**: ~$5-10
@@ -356,6 +398,20 @@ This approach ensures that the technology serves its primary purpose of supporti
 
 The project demonstrates how maker culture can contribute meaningfully to accessibility technology, creating solutions that are not only functional but also engaging and educational. By maintaining focus on the core sip and puff functionality while using the rubber chicken concept for demonstration, this system successfully bridges the gap between serious assistive technology and community engagement.
 
-## Future 
+## Future
 
-Taking inspiration from other sip and puff open source projects we will attempt to integrate mouse functionality after maker faire as time and schedule permit and possibly add a hal effect joystick into the system as well if there is an audience for it.  The mouse feature is a software extension and should be comparitively easy.  But I digress
+Taking inspiration from other sip and puff open source projects we will attempt to integrate mouse functionality after Maker Faire as time and schedule permit. The mouse feature is a software extension and should be comparatively easy.
+
+### Head-Tracking via IMU (Phase 2 — Post-Maker-Faire)
+
+The longer-term plan is to add **head-movement-based cursor control** using an IMU sensor, combining it with sip/puff for mouse clicks. This approach was validated in a peer-reviewed 2025 study ([S1] in the Reference doc) and is well-suited to users with high-level spinal cord injury or other conditions where oral motor control is limited.
+
+**Selected sensor: Bosch BNO055** (~$30–35 on a STEMMA QT breakout)
+
+The BNO055 was chosen over cheaper 6-DOF alternatives (MPU-6050, BMI270, LSM6DSOX) because it includes an on-board sensor fusion processor that outputs clean Euler angles and quaternions directly — no Kalman or Madgwick filter to implement. Its built-in magnetometer (9 DOF) also eliminates the yaw drift problem that affects 6-axis-only sensors during prolonged use, which is a real usability burden for a head mouse used over hours. The cost premium (~$25 over a basic IMU) is justified in context — it is a one-time addition, comparable in scale to a few rounds of replacement hygiene filters.
+
+**Mounting:** The BNO055 is a **remote sensor**, not mounted on the main PCB. I²C wires run along the sip/puff tube from the STEMMA QT port on the PCB to wherever the end user or their clinician finds most effective — glasses frame, forehead strap, ear clip, or tube collar. Different users have different residual movement profiles; the design intentionally leaves placement flexible. STEMMA QT / Qwiic-compatible wiring means the sensor can be repositioned or swapped without opening the enclosure or touching the PCB.
+
+**Hardware readiness:** No PCB changes are needed. The STEMMA QT expansion port (GPIO 4/5 I²C bus) is already present on the board for exactly this purpose. The BNO055's I²C address (0x28 or 0x29) does not conflict with any other device on the shared bus.
+
+A hybrid mode offering both IMU head-tracking and a Hall-effect mouthpiece joystick as user-selectable options is a longer-term stretch goal — no existing reviewed open-source project offers this combination.

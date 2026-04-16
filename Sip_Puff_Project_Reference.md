@@ -15,6 +15,8 @@
 5. [Project 3 — FLipMouse (asterics)](#5-project-3--flipmouse-asterics)
 6. [Project 4 — LipSync (Makers Making Change)](#6-project-4--lipsync-makers-making-change)
 7. [Cross-Project Patterns and Lessons](#7-cross-project-patterns-and-lessons)
+   - [7.6 Configuration Requires a Computer or a Developer — Always](#76-configuration-requires-a-computer-or-a-developer--always)
+   - [7.7 ESD / Circuit Protection Is Almost Universally Absent](#77-esd--circuit-protection-is-almost-universally-absent)
 8. [Springboard: Gaps to Exploit in Your Project](#8-springboard-gaps-to-exploit-in-your-project)
 9. [Reference Links](#9-reference-links)
 10. [Lessons Learned and To Be Implemented](#10-lessons-learned-and-to-be-implemented)
@@ -23,6 +25,7 @@
     - [10.3 Joystick / Cursor Movement — IMU-Based Head Tracking](#103-joystick--cursor-movement--imu-based-head-tracking)
     - [10.4 Pressure Sensor Selection — LPS28DFWTR as Default](#104-pressure-sensor-selection--lps28dfwtr-as-default)
     - [10.5 Optional Display Hardware — Built-in PCB Support](#105-optional-display-hardware--built-in-pcb-support)
+    - [10.6 Circuit Protection — SP724AHTG on External I/O Lines](#106-circuit-protection--sp724ahtg-on-external-io-lines)
 
 ---
 
@@ -39,13 +42,14 @@ Each project is summarised under consistent headings so direct comparison is eas
 | Feature | openSipPuff (jasonwebb) | The 'Sup (Bobcatmodder) | FLipMouse (asterics) | LipSync (MMC) | Gap / Your Potential |
 |---|---|---|---|---|---|
 | **MCU** | ATmega32u4 | Arduino Pro Micro | Arduino Nano RP2040 | Arduino platform | Your choice |
-| **Position sensing** | None (breath only) | Analog joystick | Strain gauges (4×DMS) | Hall-effect 3D magnet | Hall-effect recommended |
+| **Position sensing** | None (breath only) | Analog joystick | Strain gauges (4×DMS) | Hall-effect 3D magnet | **Post-Maker-Faire: BNO055 9-DOF IMU (head-tracking via I²C along tube); Hall-effect mouthpiece joystick as hybrid alternative** |
 | **Pressure sensor** | MPXV7007GP (analog) | MPXV7002DP | Dedicated sensor | LPS33HW + LPS22 (I²C) | **✓ LPS28DFWTR (I²C, water-resistant, 24-bit) — default; MPX5010DP through-hole alternative** |
 | **USB HID** | ✓ kbd/mouse/MIDI | ✓ mouse | ✓ mouse/kbd/gamepad | ✓ mouse/gamepad | ✓ (table stakes) |
 | **Bluetooth** | ✗ | ✗ | ✓ (RP2040 + ESP32) | ✓ (module, retired) | ✓ — critical gap |
 | **Joystick + sip unified** | ✗ | ✓ (3D-printed) | ✓ (mouthpiece) | ✓ (Joystick unit) | ✓ |
 | **Separate sip/puff threshold** | ✗ | ✗ | ✓ | ✓ | ✓ must-have |
 | **Config slots** | ✗ | ✗ | ✓ (EEPROM) | ✓ (Hub display) | ✓ with display |
+| **Text file config** | ✗ | ✗ | ✗ (WebGUI only) | ✗ (Hub only) | **✓ — primary differentiator: USB mass storage config file, no reflashing, no PC app required** |
 | **Display / UI** | ✗ | ✗ | Web GUI (PC only) | Hub OLED | **✓ J1: 1" 128×64 I²C OLED (SSD1306) + J2: 2–4" SPI color LCD (ST7789/ILI9341) — PCB connectors built in** |
 | **External switches** | ✗ | ✗ | 2× 3.5 mm jack | 3× 3.5 mm jack | 3+ jacks |
 | **IR env. control** | ✗ | ✗ | ✓ (record+replay) | ✗ | Nice-to-have |
@@ -276,7 +280,23 @@ openSipPuff and The 'Sup have no Bluetooth. FLipMouse has Bluetooth but via an E
 
 This is a lesson learned the hard way by LipSync. Having a single pressure threshold for both sip and puff excludes users who cannot sip and puff with equal force. Separate, independently calibrated thresholds are a must-have from day one.
 
-### 7.6 Cost vs. Completeness Trade-off
+### 7.6 Configuration Requires a Computer or a Developer — Always
+
+Every reviewed project locks its behaviour into firmware. Changing what the device does — even something as simple as adjusting a sip threshold — requires either reflashing (openSipPuff, The 'Sup), running a PC application (FLipMouse WebGUI), or a separate dedicated Hub unit (LipSync). There is no project in the reviewed set where a non-technical caregiver or user can independently reconfigure the device using only the device itself and a text editor. This represents a meaningful accessibility barrier within the field of assistive technology: the tool meant to grant independence requires a technical intermediary to configure.
+
+Text file configuration — device as USB mass storage, config as a plain readable/editable file — is a well-established pattern in the CircuitPython ecosystem and in some commercial AT devices, but it has not been applied to open-source sip and puff devices. It is the primary design goal of this project and is documented as Gap 7 in Section 8.
+
+### 7.7 ESD / Circuit Protection Is Almost Universally Absent
+
+None of the four reviewed projects include explicit ESD or transient overvoltage protection on their external I/O lines. This is one of the most common omissions in open-source hardware — including assistive technology projects — and it matters more here than in typical hobby builds because:
+
+- Devices are handled repeatedly by users with limited motor control, increasing connector plug/unplug cycles and the chance of accidental contact with charged surfaces
+- Clinical and institutional environments often have different grounding characteristics than a maker's bench
+- A latent GPIO damage event may present as intermittent behavior that is very difficult to diagnose in the field
+
+TVS diode arrays (e.g., SP724AHTG) cost under $0.50 per IC and can protect multiple signal lines simultaneously with negligible impact on signal integrity. The barrier to inclusion is awareness, not cost or complexity. This project explicitly addresses the gap — see Section 10.6.
+
+### 7.7 Cost vs. Completeness Trade-off
 
 There is a near-perfect inverse correlation between cost and completeness across these projects:
 
@@ -326,7 +346,20 @@ Implement two independent pressure thresholds stored in non-volatile memory. Sho
 
 Implement an ASCII serial command protocol (like FLipMouse's) over USB CDC. This allows your device to be controlled by AAC software, switch access software, or scripts. It also enables over-the-air configuration without a custom app.
 
-### Gap 7: Cost Target of < $150 for a Complete Solution
+### Gap 7: Text File Reconfigurability — One Build, Many Purposes ⭐ Primary Design Goal
+
+Every project reviewed requires firmware reflashing or a connected PC application to change what the device does. openSipPuff and The 'Sup require code edits and a recompile. FLipMouse requires the WebGUI on a tethered PC. LipSync's Hub display allows threshold adjustment but not mode switching or output remapping. **No project offers configuration that a non-technical caregiver, clinician, or user can perform independently without software tools.**
+
+This project's primary differentiator is that **the device exposes a plain text configuration file over USB mass storage**. Plugging the device into any computer shows it as a USB drive; editing the config file and unplugging is all that is needed to:
+- Remap sip and puff events to any HID output (keypress, mouse button, joystick axis, consumer control)
+- Switch operating modes (USB mouse, USB keyboard, XAC gamepad, serial AT relay, Maker faire demo)
+- Adjust sensitivity thresholds for each breath direction independently
+- Configure head-tracking parameters (dead zone, speed curve, re-centre gesture)
+- Change display content and feedback behaviour
+
+The same physical hardware — with no firmware change — can serve as a two-switch keyboard, a USB mouse, an XAC gamepad input, a demonstration toy, or a research data logger. This is the design decision that drives the choice of display hardware, the EXTERNAL_IO connector, the STEMMA QT expansion port, and the overall software architecture. No other reviewed project comes close to this capability.
+
+### Gap 8: Cost Target of < $150 for a Complete Solution
 
 Use a single-board MCU with native USB + BLE (nRF52840), Hall-effect joystick, LPS33HW pressure sensor, SSD1306 OLED, and 3× 3.5 mm switch jacks. BOM should land at **$80–$120 in single-unit quantities** — well below LipSync's $175–$325 while exceeding it on Bluetooth and display integration.
 
@@ -496,11 +529,11 @@ This approach maps naturally to the USB HID Consumer Control or relative axis mo
 
 ### 10.3 Joystick / Cursor Movement — IMU-Based Head Tracking
 
-> **Implementation timeline:** This section is planned as a **post-Maker-Faire upgrade** once the core sip/puff functionality has been validated in real-world demonstration. Mouse functionality is the first software milestone (straightforward). IMU head-tracking will be evaluated as Phase 2 alongside or after Hall-effect joystick testing. No hardware changes to the PCB are required to begin IMU development — an MPU6050 breakout connects to the shared I²C bus (GPIO 4/5).
+> **Implementation timeline:** This section is planned as a **post-Maker-Faire upgrade** once the core sip/puff functionality has been validated in real-world demonstration. Mouse functionality is the first software milestone (straightforward). IMU head-tracking will follow as Phase 2. No hardware changes to the PCB are required to begin — the BNO055 connects to the shared I²C bus (GPIO 4/5) via the STEMMA QT port.
 
 #### Background
 
-The prior-art review identified a clear evolution in joystick sensing: analog potentiometer → force-sensing resistor → strain gauge → Hall-effect magnetometer. All four approaches share a common limitation — they are **contact-force** sensors, requiring the user to physically deflect a physical stick with their lips, tongue, or teeth. This is appropriate for many users, but for users with very limited oral motor control (high-level SCI, ALS, advanced MS) even a 20 g Hall-effect stick may be too demanding.
+The prior-art review identified a clear evolution in joystick sensing: analog potentiometer → force-sensing resistor → strain gauge → Hall-effect magnetometer. All four approaches share a common limitation — they are **contact-force** sensors, requiring the user to physically deflect a stick with their lips, tongue, or teeth. This is appropriate for many users, but for users with very limited oral motor control (high-level SCI, ALS, advanced MS) even a 20 g Hall-effect stick may be too demanding.
 
 A peer-reviewed 2025 study [S1] demonstrates a compelling alternative: **head movement tracked via IMU**, combined with sip/puff for clicks. This decouples cursor movement entirely from mouth mechanics and relocates it to head orientation — a control site with much larger range of motion and lower fatigue.
 
@@ -519,33 +552,67 @@ A peer-reviewed 2025 study [S1] demonstrates a compelling alternative: **head mo
 | **IMU** | MPU6050 — 6 DOF (3-axis accelerometer + 3-axis gyroscope), I²C |
 | **IMU sample rate** | 100 Hz |
 | **Orientation algorithm** | Complementary filter — fuses accelerometer (low-freq) and gyroscope (high-freq) data to produce stable pitch/roll angles with reduced jitter |
-| **Pressure sensor** | LPS33HW (same water-resistant I²C sensor used in LipSync 4+) |
-| **Click mapping** | Sip and puff gestures detected by LPS33HW threshold crossing → left/right click |
+| **Pressure sensor** | LPS33HW (same water-resistant I²C sensor family used in LipSync 4+) |
+| **Click mapping** | Sip and puff gestures detected by threshold crossing → left/right click |
 | **Cursor mapping** | Head pitch/roll → relative mouse X/Y movement |
 | **Connectivity** | BLE HID mouse (wireless to any paired host) |
 | **Validation** | Preliminary testing with occupational therapy professionals; usability rated comparable to commercial devices |
-| **Limitations noted** | Preliminary only — no controlled user study with individuals who have actual motor impairments yet; further clinical validation needed |
+| **Limitations noted** | Preliminary only — no controlled user study with individuals who have actual motor impairments yet |
 
-#### Key Takeaways for This Project
+#### IMU Sensor Evaluation
 
-- The **MPU6050** is a proven, cheap (~$3–5 on breakout), widely available IMU that is sufficient for this application. The complementary filter approach is well-documented and implementable in MicroPython or C SDK on the Pico 2 W.
-- The **LPS33HW** sensor chosen by [S1] for sip/puff is the same sensor already identified as the recommendation in Section 10.1 — this is a strong independent validation of that choice.
-- The **ESP32-S3** used in [S1] is a close architectural cousin to the Pico 2 W + CYW43439 approach already selected (Section 10.2). The key pattern — one chip with native USB HID + BLE — is confirmed.
-- The complementary filter at 100 Hz is lightweight enough to run alongside sensor polling and BLE HID reporting without dedicated DSP hardware.
+Four candidates were evaluated for this use case. All support I²C and 3.3V logic:
 
-#### Tentative IMU Implementation Strategy
+| Sensor | DOF | Typical Price | Interface | Unique Characteristic | Head-Tracking Suitability |
+|---|---|---|---|---|---|
+| **MPU-6050** | 6 | ~$3–5 | I²C | Massive community support; some breakouts have 5V pull-ups (verify) | Viable; needs software complementary/Kalman filter; yaw drifts |
+| **BMI270** | 6 | ~$6–8 | I²C / SPI | Ultra-low power (685 µA); built-in gesture recognition | Good for battery builds; same yaw drift limitation as MPU-6050 |
+| **LSM6DSOX** | 6 | ~$8–12 | I²C / SPI | Embedded Machine Learning Core; high stability, low noise | Strong option; still needs software AHRS; yaw drift without magnetometer |
+| **BNO055** ⭐ | 9 | ~$30–35 | I²C | **On-board sensor fusion processor**; outputs clean Euler angles (heading, roll, pitch) and quaternions; built-in magnetometer eliminates yaw drift; automatic background calibration | **Selected — see decision below** |
 
-Use the **MPU6050** (or its newer drop-in replacement, the **MPU6500** or **ICM-42688-P** for lower noise) mounted on or near the mouthpiece/headset:
+**Key distinction for head-tracking:** The 6-DOF sensors (MPU-6050, BMI270, LSM6DSOX) all require a software sensor-fusion algorithm (Madgwick, Mahony, or Kalman filter) running on the microcontroller to produce stable orientation. Without a magnetometer (9th DOF), yaw (left/right heading) will drift over time, requiring the user to periodically trigger a re-centre action. For a head mouse used over hours, this is a real usability burden. The BNO055's internal fusion processor and magnetometer eliminate both of these issues entirely at the cost of ~$25 over a basic IMU.
 
-1. Sample IMU at 100 Hz via I²C.
-2. Run a complementary filter: `angle = α × (angle + gyro_rate × dt) + (1 − α) × accel_angle` where α ≈ 0.96.
-3. Map filtered pitch → mouse Y-axis relative movement; filtered roll → mouse X-axis relative movement.
-4. Apply a dead zone around centre (±N degrees) to suppress tremor and unintentional drift.
-5. Apply a non-linear speed curve (slow near centre, faster toward extremes) for fine + coarse control in one range of motion.
+#### Sensor Decision: BNO055 ✅
 
-> **Alternative / hybrid approach:** Offer both IMU head-tracking and Hall-effect joystick (mouthpiece-stick) as selectable modes, switchable via a long sip gesture or config menu. This covers both low-motor-demand users (IMU) and users who prefer a physical stick feel (Hall-effect). No existing reviewed project offers this.
+**The BNO055 is selected as the target IMU for this project.**
 
-> **To be refined:** Dead-zone size, speed curve shape, and whether to use absolute (head orientation relative to calibrated zero) or relative (rate-of-change) mapping all need user testing to determine. The [S1] paper is a useful baseline for initial parameter values.
+The $30–35 cost is acceptable in context. Replacement hygiene filters (Section 10.1) are a recurring consumable cost; the IMU is a one-time addition. The BNO055's built-in sensor fusion and absolute orientation output significantly reduce firmware complexity and eliminate the yaw drift problem without any code-level workaround. For an assistive technology device intended for prolonged daily use, removing a source of user frustration (the re-centre requirement) is worth the cost delta over a bare 6-DOF IMU.
+
+**Connection:** STEMMA QT / Qwiic connector on the main PCB → flexible I²C cable routed along the tube → BNO055 breakout at end-user-chosen placement location (see mounting section below).
+
+#### Mounting Strategy — I²C Along the Tube
+
+The BNO055 is **not mounted on the main PCB**. It is a remote sensor connected via I²C wires routed along the sip/puff tube to wherever the end user (or clinician/therapist fitting the device) finds it most effective:
+
+- **Glasses frame** — near the temple, oriented to catch pitch and roll of head nod/tilt
+- **Forehead strap** — central placement for symmetric pitch/roll response
+- **Ear clip or headband** — low-profile behind the ear
+- **Mouthpiece tube collar** — close to the mouth for a compact single-unit form factor
+
+The I²C bus runs at 400 kHz standard mode. At typical tube lengths (up to ~1 m) with 10 kΩ pull-ups already present on the PCB, the signal integrity is adequate without additional buffering. If longer runs are needed, a PCA9517 I²C buffer can be added inline.
+
+The BNO055 breakout (Adafruit #4646 or equivalent STEMMA QT format) uses a JST-SH connector compatible with the STEMMA QT port on the main PCB. A short flexible silicone-coated cable (or a custom-length STEMMA QT extension cable) routes along or inside the tube housing. Stiff wiring along a head-mounted tube creates mechanical noise in the sensor data; silicone-coated wire minimises this.
+
+> **End-user flexibility is intentional.** Different users have different residual movement profiles. A clinician fitting the device should be able to reposition the sensor and re-run the calibration sequence without opening the main enclosure or touching the PCB.
+
+#### Implementation Notes
+
+**Jitter and tremor suppression:** Humans have natural micro-tremors. The BNO055's internal fusion already smooths much of this, but a software dead zone (small movements ignored, e.g. ±2–3°) and a non-linear speed curve (slow near centre, faster toward extremes) should still be applied to prevent the cursor from feeling "twitchy."
+
+**Calibration:** The BNO055 calibrates automatically in the background during normal use. On first power-up, the user (or their assistant) should perform a brief calibration routine — slow figure-8 head movement for the magnetometer, tilting in each axis for the accelerometer. The calibration state can be read via I²C and displayed on the OLED (J1) to guide the user.
+
+**Weight and comfort:** The BNO055 in a STEMMA QT breakout format (Adafruit #4646) weighs approximately 1.8 g. The back of the PCB should be insulated (Kapton tape or a 3D-printed snap-on back cover) to prevent skin contact with solder points and to protect against perspiration.
+
+**Firmware approach:**
+1. Poll BNO055 at 100 Hz via I²C — read Euler angles (heading, roll, pitch) directly from fusion output registers
+2. Apply dead zone: discard movement below ±N degrees from calibrated centre
+3. Map pitch → mouse Y-axis relative movement; roll → mouse X-axis relative movement
+4. Apply non-linear speed curve
+5. Sip/puff threshold crossings from LPS28DFWTR → left/right click events
+
+> **Alternative / hybrid mode:** Offer both IMU head-tracking and (future) Hall-effect mouthpiece-joystick as selectable modes, switchable via a long sip gesture or config menu. This covers low-motor-demand users (IMU) and users who prefer a physical stick feel. No reviewed project in Section 3–6 offers this combination.
+
+> **To be refined:** Dead-zone size, speed curve shape, and re-centre trigger gesture all need empirical testing with actual users. [S1] provides a useful baseline for initial parameter values.
 
 ---
 
@@ -687,7 +754,43 @@ No address conflicts exist across any combination of populated devices.
 
 ---
 
-*Last updated: April 2026. Sections 10.4 and 10.5 added — sensor decision and display hardware documented. Section 10.3 IMU timeline updated to post-Maker-Faire.*
+---
+
+### 10.6 Circuit Protection — SP724AHTG on External I/O Lines
+
+#### The Problem
+
+Open-source assistive technology projects almost universally skip ESD (electrostatic discharge) and transient overvoltage protection on their external I/O lines. This is not unique to AT — it is endemic to maker and open-source hardware broadly. The cost is negligible; the awareness is not. The consequences of omitting it are latent GPIO damage that may not manifest immediately but can cause intermittent faults that are extremely hard to diagnose, especially in field-deployed devices used by people who depend on them.
+
+For a device like this one — handled by users with limited motor control, plugged and unplugged frequently, potentially used in clinical environments with atypical grounding — the risk is higher than average.
+
+#### What Was Done
+
+SP724AHTG TVS (transient voltage suppressor) diode array ICs (STMicroelectronics) were added to all external-facing I/O lines that are **not** already protected by the PC817SC opto-isolators on the XAC output circuit.
+
+| Protected Lines | Interface | IC Placement |
+|---|---|---|
+| BUTTON (GPIO 20), ROT_A (GPIO 18), ROT_B (GPIO 19) | EXTERNAL_IO connector | SP724AHTG near connector |
+| SDA (GPIO 4), SCL (GPIO 5) | EXTERNAL_IO + STEMMA QT + J1 OLED | SP724AHTG on I²C lines |
+| SPI lines GPIO 10–16 | J2 color LCD connector | SP724AHTG near J2 |
+
+**Not needed on:** GPIO 0 (SIP_ENABLE) and GPIO 1 (PUF_ENABLE) — already opto-isolated by PC817SC before reaching the TRRS jacks.
+
+#### Why SP724AHTG
+
+- Low capacitance — does not degrade I²C (400 kHz) or SPI signal integrity
+- Protects multiple lines per IC — reduces BOM count
+- Small package (SOT-23-6 or similar) — fits close to connectors
+- ~$0.30–0.50 per unit — cost-negligible at this project scale
+- Well-documented by STMicroelectronics with application notes for exactly this use case
+
+#### Note for Builders and Forks
+
+If you fork this project or adapt the schematic, **do not remove the SP724AHTG ICs to simplify the BOM.** The per-unit savings are under $1. The risk of a user's device failing in the field because a GPIO was damaged by a static discharge during a mouthpiece connector swap is not worth it.
+
+---
+
+*Last updated: April 2026. Section 10.6 added — circuit protection documented. Sections 10.4 and 10.5 added — sensor decision and display hardware documented. Section 10.3 IMU timeline updated to post-Maker-Faire.*
 
 ---
 

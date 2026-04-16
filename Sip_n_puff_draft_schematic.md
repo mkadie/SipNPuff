@@ -825,6 +825,7 @@ This connector consolidates the rotary encoder signals, push button, and I²C bu
 - **ROT_B/PUFF**: GPIO 19 — rotary encoder channel B
 - **SCL / SDA**: GPIO 5 / GPIO 4 — I²C shared bus
 - **Power**: 3.3V and GND
+- **ESD Protection**: SP724AHTG TVS array IC on signal lines (BUTTON, ROT_A, ROT_B, SDA, SCL)
 
 ### STEMMA QT I²C Expansion Connector:
 - **Connector**: JST-SH 4-pin (1.0 mm pitch) — STEMMA QT / Qwiic standard
@@ -849,6 +850,12 @@ This connector consolidates the rotary encoder signals, push button, and I²C bu
 - **Supply**: 3.3V
 - **Backlight**: GPIO 16 (PWM) or solder bridge to always-on 3.3V
 
+### Circuit Protection Components:
+- **IC**: SP724AHTG — Low-capacitance TVS diode array (STMicroelectronics)
+- **Purpose**: ESD and transient overvoltage protection on I/O lines not covered by the PC817 opto-isolators
+- **Protected lines**: EXTERNAL_IO connector signals (BUTTON / GPIO 20, ROT_A / GPIO 18, ROT_B / GPIO 19, SDA / GPIO 4, SCL / GPIO 5); additional placement on STEMMA QT and display connector lines as needed
+- **Note**: GPIO 0 and GPIO 1 (SIP_ENABLE / PUF_ENABLE) are opto-isolated via PC817SC and do not require the SP724AHTG
+
 ### Rubber Chicken Interface Components:
 - **Sip Interface**: Mechanical connection for suction
 - **Blow Interface**: Mechanical connection for blowing
@@ -859,7 +866,7 @@ This connector consolidates the rotary encoder signals, push button, and I²C bu
 1. **Power Management**: 5V input to 3.3V output
 2. **Dual Sensor Support**: LPS28DFWTR (SMD, I²C default) or MPX5010DP (through-hole, analog ADC alternative) — both footprints on initial PCBs
 3. **I²C Communication**: LPS28DFWTR on GPIO 4 (SDA) / GPIO 5 (SCL) at address 0x5C — 24-bit, 0.32 Pa noise, water-resistant
-4. **ADC Input (alternative)**: MPX5010DP analog Vout on GPIO 26 (ADC0)
+4. **ADC Input (alternative)**: MPX5010DP analog Vout via R5 (10kΩ divider) on GPIO 26 (ADC0); supplied from 5V
 5. **XAC / AT Outputs**: GPIO 0 (SIP_ENABLE) and GPIO 1 (PUF_ENABLE) drive PC817SC optocouplers → TRRS 3.5mm jacks for Xbox Adaptive Controller or AT device integration; sip/puff detection is done by the pressure sensor, not these GPIOs
 6. **Status Output**: LED indicator on GPIO 2
 7. **EXTERNAL_IO Connector**: 7-pin header combining rotary encoder (GPIO 18 ROT_A/SIP, GPIO 19 ROT_B/PUFF), push button (GPIO 20), and I²C bus (GPIO 4/5) + 3.3V/GND — connects rotary encoder module with optional integrated OLED
@@ -867,7 +874,64 @@ This connector consolidates the rotary encoder signals, push button, and I²C bu
 9. **Optional I²C OLED Display (J1)**: 4-pin Dupont connector; 1" 128×64 SSD1306 shares I²C bus with LPS28DFWTR (addresses 0x3C vs 0x5C — no conflict)
 10. **Optional SPI Color LCD (J2)**: 9-pin Dupont connector; 2"–4" ST7789/ILI9341 on dedicated SPI1 hardware pins (GPIO 10–16); backlight PWM on GPIO 16
 11. **Rubber Chicken Interface**: Mechanical connections for sip/puff demonstration
-10. **Low Power Consumption**: LPS28DFWTR idles at 1.7 µA; overall system target < 10 mA standby (displays off)
-11. **Real-time Processing**: Pico W RP2040 handles I²C polling, ADC sampling, signal filtering, USB HID output, and optional display rendering
+12. **Low Power Consumption**: LPS28DFWTR idles at 1.7 µA; overall system target < 10 mA standby (displays off)
+13. **Real-time Processing**: Pico W RP2040 handles I²C polling, ADC sampling, signal filtering, USB HID output, and optional display rendering
+14. **Circuit Protection**: SP724AHTG TVS array IC on all external-facing I/O lines not protected by the PC817 opto-isolators (EXTERNAL_IO connector: GPIO 18/19/20/4/5; STEMMA QT and display connector lines as applicable)
+15. **Under Consideration — microSD Data Logging**: 4 free GPIOs (21–24) reserved as candidate pins for a software SPI microSD card reader; see expansion notes below
 
 This schematic documents both sensor options in a dual-footprint design. The LPS28DFWTR I²C sensor is the default for production use; the MPX5010DP through-hole option remains available for prototyping without SMD tooling. Both display connectors (J1 I²C OLED and J2 SPI color LCD) are built into the PCB hardware but unpopulated — enabling future display support without board redesign.
+
+---
+
+## Future Expansion Considerations
+
+### 💡 microSD Card Reader — Usage Data Logging
+
+> **Difficulty:** Easy — standard SPI peripheral, well-supported libraries on RP2040
+> **Status:** Under consideration — hardware GPIO slots are available; usefulness of logged data is an open question and the primary reason this has not been committed to the design yet
+
+#### Hardware
+
+A microSD card module connects via SPI. SPI1 is already occupied by the color LCD, so a software SPI implementation on free GPIOs is the clean approach. The following pins are proposed:
+
+```
+    microSD CANDIDATE GPIO ASSIGNMENT (software SPI)
+    ┌────────┬───────────┬──────────────────────────────────────┐
+    │ GPIO 21│  SD_CS    │  Chip select (active low)            │
+    │ GPIO 22│  SD_SCK   │  SPI clock                           │
+    │ GPIO 23│  SD_MOSI  │  SPI data out (to card)              │
+    │ GPIO 24│  SD_MISO  │  SPI data in (from card)             │
+    └────────┴───────────┴──────────────────────────────────────┘
+
+    Supply: 3.3V (most microSD modules include onboard 3.3V regulator
+            and level shifting — verify before connecting directly)
+    Remaining free GPIOs after this assignment: 17, 25
+```
+
+Software SPI at 1–4 MHz is perfectly adequate for logging purposes on the RP2040. The `sdcard.py` MicroPython driver or the C SDK FatFS port both support this configuration.
+
+#### The Real Question — What Is Worth Logging?
+
+The hardware cost and code complexity are both low. The harder question is whether the logged data generates actionable insight. Items currently under discussion:
+
+| Data Point | What It Could Tell Us | Useful? |
+|---|---|---|
+| Sip/puff event count per session | Total usage volume; fatigue patterns over time | Likely yes — rehab reporting |
+| Pressure magnitude at each event | Whether user breath strength is changing; calibration drift | Probably yes |
+| Hard vs soft sip/puff ratio | How often user hits each threshold tier | Maybe — depends on firmware tiers |
+| Time between events (inter-event interval) | Response time, fatigue, or tremor patterns | Interesting for clinical research |
+| Session start/end timestamps | Daily usage patterns | Yes — needs RTC or WiFi time sync |
+| False trigger count | Sensor noise or threshold calibration issues | Yes — firmware quality metric |
+| Config/threshold changes | How often and which direction user adjusts | Yes — UX feedback |
+| Operating mode (USB HID / BLE / gamepad) | Which mode gets used most | Yes — informs future dev priority |
+| Pressure sensor temperature (LPS28DFWTR has onboard temp) | Correlate performance with ambient conditions | Low priority |
+
+#### Discussion Points
+
+- **Who benefits from the log?** Clinicians and therapists tracking patient progress would benefit most. The user themselves less so unless there is a display showing trends.
+- **Privacy** — usage logs are potentially sensitive health data. If the device logs to SD, what is the data retention and access policy? Should logging be opt-in?
+- **Without a real-time clock (RTC)**, timestamps are only relative to power-on, which limits usefulness for session-based reporting. A simple DS3231 or PCF8523 RTC module on the STEMMA QT port would solve this at ~$2 additional BOM cost.
+- **Log format** — CSV is the simplest (human-readable, importable into spreadsheets for rehab reporting). Binary is more compact. JSON is most flexible.
+- **Trigger for logging** — log every event? Every session summary on power-off? Configurable interval?
+
+> **Next step:** Decide whether there is a concrete use case (e.g. therapist download, user self-monitoring, research data collection) that justifies the SD slot. If yes, reserve GPIO 21–24 on the PCB as unpopulated test points so a future board revision can add the connector without a full respin.
