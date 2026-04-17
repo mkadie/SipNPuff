@@ -410,8 +410,14 @@ The longer-term plan is to add **head-movement-based cursor control** using an I
 
 The BNO055 was chosen over cheaper 6-DOF alternatives (MPU-6050, BMI270, LSM6DSOX) because it includes an on-board sensor fusion processor that outputs clean Euler angles and quaternions directly — no Kalman or Madgwick filter to implement. Its built-in magnetometer (9 DOF) also eliminates the yaw drift problem that affects 6-axis-only sensors during prolonged use, which is a real usability burden for a head mouse used over hours. The cost premium (~$25 over a basic IMU) is justified in context — it is a one-time addition, comparable in scale to a few rounds of replacement hygiene filters.
 
-**Mounting:** The BNO055 is a **remote sensor**, not mounted on the main PCB. I²C wires run along the sip/puff tube from the STEMMA QT port on the PCB to wherever the end user or their clinician finds most effective — glasses frame, forehead strap, ear clip, or tube collar. Different users have different residual movement profiles; the design intentionally leaves placement flexible. STEMMA QT / Qwiic-compatible wiring means the sensor can be repositioned or swapped without opening the enclosure or touching the PCB.
+**Two mounting modes — same hardware, different placement:**
+
+**Mode A — Head Strap / Glasses Mount:** The BNO055 is clipped to a glasses frame, forehead strap, or ear clip. Head nods and tilts move the cursor. Best for users with good head mobility. I²C wires run from the STEMMA QT port along the tube to the sensor on the head.
+
+**Mode B — Tongue Joystick via Straw Attachment:** A small 3D-printed collar clips the BNO055 to the sip/puff tube near the mouthpiece. The user deflects the straw with their tongue — left, right, up, down — and the BNO055 detects the angular change of the tube. The straw becomes the joystick lever. Best for users with good tongue or lip control but limited head movement. Same hardware as Mode A, just repositioned.
+
+Switching between modes is a config file change (sensitivity, dead zone, and axis orientation parameters) — no reflashing required. This is a direct expression of the project's core flexibility goal.
 
 **Hardware readiness:** No PCB changes are needed. The STEMMA QT expansion port (GPIO 4/5 I²C bus) is already present on the board for exactly this purpose. The BNO055's I²C address (0x28 or 0x29) does not conflict with any other device on the shared bus.
 
-A hybrid mode offering both IMU head-tracking and a Hall-effect mouthpiece joystick as user-selectable options is a longer-term stretch goal — no existing reviewed open-source project offers this combination.
+A three-way hybrid — head tracking, tongue joystick, and Hall-effect mouthpiece stick as selectable modes on the same hardware — is a longer-term stretch goal. No existing reviewed open-source project offers even two of these three options.
