@@ -168,13 +168,24 @@ The rubber chicken concept serves as an engaging demonstration tool for:
   - Battery life: >20 hours continuous operation
 
 ### Cost Analysis
-- **Sensors**: ~$3-6 (LPS28DFWTR ~$4-6 SMD; MPX5010DP ~$3-5 through-hole)
-- **Microcontroller**: ~$4 (RP2040)
-- **Circuit Protection ICs**: ~$1-2 (SP724AHTG × 2–3 units)
-- **Mechanical Components**: ~$5-10
-- **Enclosure Materials**: ~$5-10
-- **Miscellaneous Components**: ~$5-10
-- **Total Target Cost**: $25-50
+
+| Component | Cost (single unit) | Notes |
+|---|---|---|
+| Pressure sensor — LPS28DFWTR | ~$4–6 | **Primary / default.** STMicroelectronics CCLGA-7L SMD; I²C, 24-bit, 0.32 Pa noise, water-resistant potting gel. Requires reflow or hot-air soldering. |
+| Microcontroller | ~$4 | Raspberry Pi Pico W (RP2040 + CYW43439) |
+| XAC output circuit | ~$2–3 | 2× PC817SC optocouplers + 2× TRRS jacks |
+| Circuit protection | ~$1–2 | SP724AHTG TVS array ICs × 2–3 units; protects all I/O lines not covered by opto-isolators |
+| Mechanical components | ~$5–10 | Tube, mouthpiece, connectors |
+| Enclosure materials | ~$5–10 | 3D-printed or off-the-shelf housing |
+| Miscellaneous | ~$5–10 | Resistors, caps, PCB, hardware |
+| **Base build total** | **~$21–45** | Functional sip/puff device with XAC output and ESD protection |
+| **Optional — MPX5010DP sensor** | **+~$3–5** | Through-hole analog alternative to the LPS28DFWTR; hand-solderable, no SMD tools required. *Depending on performance testing of the LPS28DFWTR vs MPX5010DP, this may remain a supported alternative or be retired from the design.* PCB includes footprint for both — only one is populated. |
+| **Optional — BNO055 IMU** | **+~$30–35** | Bosch BNO055 on STEMMA QT breakout (e.g. Adafruit #4646); adds head-tracking (Mode A) and/or tongue-joystick cursor control (Mode B). Post-Maker-Faire upgrade — not required for core sip/puff functionality. Sensor alone costs more than the rest of the BOM combined at single-unit prices. |
+| **Optional — display(s)** | **+~$5–15** | J1: 1" SSD1306 OLED ~$3–5; J2: 2–4" color LCD ~$8–15; PCB connectors already present |
+| **Optional — hygiene filters** | **~$0.50–2 each** | Recurring consumable; see Section 10.1 of reference doc for filter options |
+| **Full build with IMU + display** | **~$56–95** | Still well below comparable commercial AT devices ($175–$325+) |
+| **Future / Medical-grade — redundant hardware** | **+~$15–30 est.** | For a medically certified build: a second LPS28DFWTR pressure sensor (cross-checks primary; flags discrepancy as fault condition) plus a second or dedicated safety CPU (hardware watchdog / supervisory MCU to monitor the primary RP2040 and force a safe state on failure). Required for IEC 62304 / FDA Class II pathway. Significant increase in PCB complexity and firmware scope. Not planned for current prototype — noted here as the architectural direction a certified variant would take. The lead designer has prior involvement in the design and manufacture of an FDA-regulated medical device (a lithium battery system for power wheelchairs, developed in conjunction with an established powerchair manufacturer), making this a realistic rather than purely aspirational future direction. See Section 10.7 of the reference doc for full detail. |
+
 - **Manufacturing Considerations**: 
   - Scalable production design
   - Component sourcing for cost optimization
@@ -415,6 +426,8 @@ The BNO055 was chosen over cheaper 6-DOF alternatives (MPU-6050, BMI270, LSM6DSO
 **Mode A — Head Strap / Glasses Mount:** The BNO055 is clipped to a glasses frame, forehead strap, or ear clip. Head nods and tilts move the cursor. Best for users with good head mobility. I²C wires run from the STEMMA QT port along the tube to the sensor on the head.
 
 **Mode B — Tongue Joystick via Straw Attachment:** A small 3D-printed collar clips the BNO055 to the sip/puff tube near the mouthpiece. The user deflects the straw with their tongue — left, right, up, down — and the BNO055 detects the angular change of the tube. The straw becomes the joystick lever. Best for users with good tongue or lip control but limited head movement. Same hardware as Mode A, just repositioned.
+
+With proper configuration the required activation force can be significantly reduced. The collar's position along the tube acts as a lever — moving it further from the tip lengthens the lever arm so a lighter tongue push produces a larger angular signal. Tube material flexibility also plays a role. On the software side, the sensitivity and dead zone settings in the config file can be tuned so that very small movements register as valid input without making the cursor jittery at rest. This makes Mode B viable for users with very limited tongue or lip strength, and gives clinicians a way to adjust force requirements without any hardware changes.
 
 Switching between modes is a config file change (sensitivity, dead zone, and axis orientation parameters) — no reflashing required. This is a direct expression of the project's core flexibility goal.
 

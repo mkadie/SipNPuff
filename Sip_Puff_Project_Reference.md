@@ -26,6 +26,7 @@
     - [10.4 Pressure Sensor Selection — LPS28DFWTR as Default](#104-pressure-sensor-selection--lps28dfwtr-as-default)
     - [10.5 Optional Display Hardware — Built-in PCB Support](#105-optional-display-hardware--built-in-pcb-support)
     - [10.6 Circuit Protection — SP724AHTG on External I/O Lines](#106-circuit-protection--sp724ahtg-on-external-io-lines)
+    - [10.7 Medical Certification Pathway — Redundant Sensor and Safety CPU](#107-medical-certification-pathway--redundant-sensor-and-safety-cpu)
 
 ---
 
@@ -42,7 +43,7 @@ Each project is summarised under consistent headings so direct comparison is eas
 | Feature | openSipPuff (jasonwebb) | The 'Sup (Bobcatmodder) | FLipMouse (asterics) | LipSync (MMC) | Gap / Your Potential |
 |---|---|---|---|---|---|
 | **MCU** | ATmega32u4 | Arduino Pro Micro | Arduino Nano RP2040 | Arduino platform | Your choice |
-| **Position sensing** | None (breath only) | Analog joystick | Strain gauges (4×DMS) | Hall-effect 3D magnet | **Post-Maker-Faire: BNO055 9-DOF IMU (head-tracking via I²C along tube); Hall-effect mouthpiece joystick as hybrid alternative** |
+| **Position sensing** | None (breath only) | Analog joystick | Strain gauges (4×DMS) | Hall-effect 3D magnet | **Post-Maker-Faire: BNO055 9-DOF IMU — Mode A: head strap/glasses mount; Mode B: straw collar tongue joystick. Same hardware, config-file switch. Hall-effect stick as further stretch goal.** |
 | **Pressure sensor** | MPXV7007GP (analog) | MPXV7002DP | Dedicated sensor | LPS33HW + LPS22 (I²C) | **✓ LPS28DFWTR (I²C, water-resistant, 24-bit) — default; MPX5010DP through-hole alternative** |
 | **USB HID** | ✓ kbd/mouse/MIDI | ✓ mouse | ✓ mouse/kbd/gamepad | ✓ mouse/gamepad | ✓ (table stakes) |
 | **Bluetooth** | ✗ | ✗ | ✓ (RP2040 + ESP32) | ✓ (module, retired) | ✓ — critical gap |
@@ -363,6 +364,18 @@ The same physical hardware — with no firmware change — can serve as a two-sw
 
 Use a single-board MCU with native USB + BLE (nRF52840), Hall-effect joystick, LPS33HW pressure sensor, SSD1306 OLED, and 3× 3.5 mm switch jacks. BOM should land at **$80–$120 in single-unit quantities** — well below LipSync's $175–$325 while exceeding it on Bluetooth and display integration.
 
+### Gap 9: Medical Certification Pathway — Redundant Sensor + Safety CPU
+
+None of the reviewed projects address medical device certification. All four are maker/open-source builds intended for personal or research use. A device used daily by someone with ALS, high-level SCI, or advanced MS is in practice a primary communication and environmental control interface — a failure is not merely inconvenient. Formal certification (FDA Class II, CE marking under MDR, IEC 62304 software lifecycle) would require hardware and software changes beyond the current design, but it is worth noting the architectural direction a certified variant would take:
+
+- **Redundant pressure sensor:** A second LPS28DFWTR on the same I²C bus (at the alternate address 0x5D) cross-checks the primary (0x5C). Significant discrepancy between the two readings flags a sensor fault and triggers a safe-state response rather than silently producing erroneous output.
+- **Safety CPU / supervisory MCU:** A second microcontroller — either a dedicated safety MCU (e.g. TI TMS570 series, Renesas RH850) or a simpler supervisory MCU (e.g. STM32 with hardware watchdog) — independently monitors the primary RP2040. If the primary fails to service the watchdog within the required interval, the safety CPU halts outputs and alerts the user or caregiver.
+- **Firmware scope:** IEC 62304 Class B or C software lifecycle processes — formal requirements tracing, hazard analysis (ISO 14971), unit testing with coverage targets, change control. This is a significant undertaking and is not planned for the current open-source prototype.
+
+The current design does not preclude this path. The dual I²C address support on the LPS28DFWTR (SA0 solder bridge) means a second sensor can be added to the existing PCB without layout changes. The STEMMA QT and EXTERNAL_IO connectors provide expansion points. A future PCB revision could add a small supervisory MCU in a QFN package alongside the Pico W without changing the overall form factor significantly.
+
+> **Current status:** Not planned. Noted here as the intended architectural direction for any future medically certified variant, and to ensure design decisions made now do not close off that path unnecessarily.
+
 ---
 
 ## 9. Reference Links
@@ -582,37 +595,78 @@ The $30–35 cost is acceptable in context. Replacement hygiene filters (Section
 
 #### Mounting Strategy — I²C Along the Tube
 
-The BNO055 is **not mounted on the main PCB**. It is a remote sensor connected via I²C wires routed along the sip/puff tube to wherever the end user (or clinician/therapist fitting the device) finds it most effective:
+The BNO055 is **not mounted on the main PCB**. It is a remote sensor connected via I²C wires routed along the sip/puff tube to wherever the end user (or clinician/therapist fitting the device) finds it most effective. Two primary mounting modes are planned, each using identical hardware but configured differently via the text config file:
 
+---
+
+##### Mode A — Head Strap / Glasses Mount
+
+The sensor is attached to the user's head and tracks head orientation. Cursor movement is driven by head nods (pitch → Y) and head turns or tilts (roll → X).
+
+Suitable mounting locations:
 - **Glasses frame** — near the temple, oriented to catch pitch and roll of head nod/tilt
 - **Forehead strap** — central placement for symmetric pitch/roll response
 - **Ear clip or headband** — low-profile behind the ear
-- **Mouthpiece tube collar** — close to the mouth for a compact single-unit form factor
 
-The I²C bus runs at 400 kHz standard mode. At typical tube lengths (up to ~1 m) with 10 kΩ pull-ups already present on the PCB, the signal integrity is adequate without additional buffering. If longer runs are needed, a PCA9517 I²C buffer can be added inline.
+**Movement scale:** Large — typical head movements span 15–45° for comfortable cursor travel. Dead zone of ±2–3° around neutral to suppress tremor. Moderate sensitivity setting in config.
 
-The BNO055 breakout (Adafruit #4646 or equivalent STEMMA QT format) uses a JST-SH connector compatible with the STEMMA QT port on the main PCB. A short flexible silicone-coated cable (or a custom-length STEMMA QT extension cable) routes along or inside the tube housing. Stiff wiring along a head-mounted tube creates mechanical noise in the sensor data; silicone-coated wire minimises this.
+**Calibration:** User sits in neutral head position; long sip gesture sets the zero point. The BNO055 magnetometer prevents yaw drift over long sessions.
 
-> **End-user flexibility is intentional.** Different users have different residual movement profiles. A clinician fitting the device should be able to reposition the sensor and re-run the calibration sequence without opening the main enclosure or touching the PCB.
+**Best for:** Users with good head mobility but limited oral/limb motor control (high-level SCI, ALS, advanced MS).
+
+---
+
+##### Mode B — Straw / Tongue Joystick Mount
+
+The sensor is attached to the sip/puff tube near the mouthpiece, so that **tongue movement deflects the tube and the BNO055 detects that angular change**. The straw itself becomes the joystick lever — pushed left, right, up, or down by the tongue.
+
+**Mounting:** A small 3D-printed clip or collar attaches the BNO055 breakout to the tube a short distance from the mouthpiece tip. The clip holds the sensor flush against the tube so tube deflection translates directly into angular change. The I²C wires run back along the tube to the main PCB's STEMMA QT connector, same as in Mode A.
+
+**Movement scale:** Small — tongue deflections of a few degrees translate to meaningful stick input. High sensitivity setting and tight dead zone required in config. The straw's natural resting position when held loosely in the mouth defines the centre point.
+
+**Axis orientation:** The sensor's pitch and roll axes need to be re-mapped in config relative to how the clip is oriented on the tube (tube is horizontal, not vertical like a head-mounted unit). This is a config file parameter, not a firmware change.
+
+**Best for:** Users with good tongue or lip control but limited head movement — a different motor profile than Mode A. Also useful as a lower-fatigue alternative for users who can do both, since tongue control requires no neck muscle effort.
+
+**Relationship to FLipMouse:** The FLipMouse uses strain gauges on a mouthpiece stick to achieve a similar input concept. This implementation replaces the strain gauge assembly with a single BNO055 breakout clipped to the tube — simpler to build, easier to 3D print the collar, same functional result.
+
+**Reducing required activation force:** Because the BNO055 detects angular deflection of the tube rather than measuring physical force directly, the amount of tongue effort needed to produce a usable input signal can be reduced through two complementary approaches:
+
+- **Mechanical:** The collar position along the tube acts as a lever. Placing the sensor closer to the mouthpiece tip shortens the lever arm and requires more deflection for the same angular change; placing it further back lengthens the lever arm, meaning a smaller tongue push produces a larger angular signal at the sensor. Tube material also matters — a softer, more flexible tube deflects more easily under the same tongue force than rigid tubing, lowering the effort threshold. These are physical design choices made when printing and assembling the collar.
+
+- **Software:** Sensitivity and dead zone parameters in the config file can be tuned so that very small angular changes (minimal force) register as valid input. Increasing sensitivity means a lighter touch moves the cursor; the dead zone prevents that sensitivity from making the cursor jittery at rest. Together, a properly tuned collar geometry and config file can bring the effective activation force down to a level accessible to users with very limited tongue or lip strength.
+
+This is a meaningful advantage over strain-gauge implementations like FLipMouse, where the activation force is largely fixed by the physical spring constant of the stick mechanism and requires hardware modification to change. Here, the clinician or user can adjust force requirements through a combination of collar placement and a text file edit.
+
+> **The two modes use identical hardware.** Switching between head-strap tracking and tongue-joystick mode is purely a matter of physically repositioning the sensor clip and updating three parameters in the text config file (sensitivity, dead zone, axis orientation). No firmware change, no reflashing.
+
+---
+
+The I²C bus runs at 400 kHz standard mode. At typical tube lengths (up to ~1 m) with 10 kΩ pull-ups already present on the PCB, signal integrity is adequate without additional buffering. If longer runs are needed, a PCA9517 I²C buffer can be added inline.
+
+The BNO055 breakout (Adafruit #4646 or equivalent STEMMA QT format) connects via JST-SH to the STEMMA QT port on the main PCB. Use flexible silicone-coated wire along the tube in both modes — stiff wire creates mechanical noise in the sensor data and is uncomfortable for head-mounted use.
+
+> **End-user flexibility is intentional.** Different users have different residual movement profiles. A clinician fitting the device should be able to switch modes, reposition the sensor, and re-run calibration without opening the enclosure or touching the PCB.
 
 #### Implementation Notes
 
-**Jitter and tremor suppression:** Humans have natural micro-tremors. The BNO055's internal fusion already smooths much of this, but a software dead zone (small movements ignored, e.g. ±2–3°) and a non-linear speed curve (slow near centre, faster toward extremes) should still be applied to prevent the cursor from feeling "twitchy."
+**Jitter and tremor suppression:** The BNO055's internal fusion already smooths much of this, but a software dead zone and non-linear speed curve should still be applied in both modes. The dead zone and sensitivity values differ significantly between modes and are exposed as config file parameters.
 
-**Calibration:** The BNO055 calibrates automatically in the background during normal use. On first power-up, the user (or their assistant) should perform a brief calibration routine — slow figure-8 head movement for the magnetometer, tilting in each axis for the accelerometer. The calibration state can be read via I²C and displayed on the OLED (J1) to guide the user.
+**Calibration:** The BNO055 calibrates automatically in the background. On first power-up a brief routine is recommended — slow figure-8 motion for the magnetometer, tilting in each axis for the accelerometer. Calibration state can be read via I²C and displayed on the OLED (J1). For tongue-joystick mode, the calibration motion is simply moving the straw through its range rather than moving the head.
 
-**Weight and comfort:** The BNO055 in a STEMMA QT breakout format (Adafruit #4646) weighs approximately 1.8 g. The back of the PCB should be insulated (Kapton tape or a 3D-printed snap-on back cover) to prevent skin contact with solder points and to protect against perspiration.
+**Weight and comfort:** The BNO055 in STEMMA QT breakout format (Adafruit #4646) weighs approximately 1.8 g. For head-mounted use, insulate the back of the PCB (Kapton tape or 3D-printed cover) to prevent skin contact and protect against perspiration. For tube-mount use, the 3D-printed collar provides natural insulation.
 
-**Firmware approach:**
-1. Poll BNO055 at 100 Hz via I²C — read Euler angles (heading, roll, pitch) directly from fusion output registers
-2. Apply dead zone: discard movement below ±N degrees from calibrated centre
-3. Map pitch → mouse Y-axis relative movement; roll → mouse X-axis relative movement
-4. Apply non-linear speed curve
+**Firmware approach (common to both modes):**
+1. Poll BNO055 at 100 Hz via I²C — read Euler angles directly from fusion output registers
+2. Apply dead zone: discard movement below ±N degrees from calibrated centre (N from config)
+3. Map axis A → mouse X; axis B → mouse Y (axis assignment from config — allows Mode A and Mode B to use different physical orientations)
+4. Apply sensitivity scaling and non-linear speed curve (parameters from config)
 5. Sip/puff threshold crossings from LPS28DFWTR → left/right click events
+6. Long sip gesture → re-centre (reset zero point to current orientation)
 
-> **Alternative / hybrid mode:** Offer both IMU head-tracking and (future) Hall-effect mouthpiece-joystick as selectable modes, switchable via a long sip gesture or config menu. This covers low-motor-demand users (IMU) and users who prefer a physical stick feel. No reviewed project in Section 3–6 offers this combination.
+> **Three-way hybrid mode (future stretch goal):** Head-tracking (Mode A), tongue-joystick (Mode B), and Hall-effect mouthpiece stick as three user-selectable input modes on the same hardware, switchable via config file or long-gesture. No existing reviewed project offers even two of these three options.
 
-> **To be refined:** Dead-zone size, speed curve shape, and re-centre trigger gesture all need empirical testing with actual users. [S1] provides a useful baseline for initial parameter values.
+> **To be refined:** Dead-zone size, speed curve shape, tongue-joystick collar geometry, and axis orientation for tube-mount all need empirical testing. The [S1] paper provides a useful baseline for head-tracking parameters; tongue-joystick parameters will need independent user testing.
 
 ---
 
@@ -790,7 +844,73 @@ If you fork this project or adapt the schematic, **do not remove the SP724AHTG I
 
 ---
 
-*Last updated: April 2026. Section 10.6 added — circuit protection documented. Sections 10.4 and 10.5 added — sensor decision and display hardware documented. Section 10.3 IMU timeline updated to post-Maker-Faire.*
+---
+
+### 10.7 Medical Certification Pathway — Redundant Sensor and Safety CPU
+
+#### Context
+
+The current build is an open-source maker prototype. It is not a certified medical device and makes no claim to be one. However, the device is designed for use by people who may depend on it as a primary communication or environmental control interface — a population for whom device failure carries real consequences. This section documents the hardware and process changes a future certified variant would require, and confirms that the current design does not unnecessarily foreclose that path.
+
+#### Regulatory Framework (Brief Overview)
+
+| Jurisdiction | Relevant Standard | Device Class |
+|---|---|---|
+| USA (FDA) | 21 CFR Part 820, IEC 62304 | Class II (likely) — premarket notification 510(k) |
+| EU | MDR 2017/745, IEC 62304, ISO 13485 | Class IIa or IIb depending on intended use |
+| Software lifecycle | IEC 62304 | Class B (moderate harm) or Class C (serious harm) |
+| Risk management | ISO 14971 | Required for all classes |
+
+#### Redundant Pressure Sensor
+
+The LPS28DFWTR supports two I²C addresses via the SA0 solder bridge (0x5C or 0x5D). A second sensor at the alternate address can be placed in the same breath path — either in the same enclosure or immediately adjacent in the tube stack — and polled alongside the primary sensor at runtime.
+
+The firmware cross-checks both readings on every sample. A configurable discrepancy threshold (e.g. >5 hPa sustained for >100 ms) flags a sensor fault, halts sip/puff output, and alerts the user via the display and an audible or tactile indicator. The device enters a safe state — no spurious commands — rather than silently producing incorrect output.
+
+The current PCB does not include a populated second sensor footprint, but the dual I²C address support means a second LPS28DFWTR can be wired to the existing I²C bus (GPIO 4/5) via the STEMMA QT connector or a solder bridge on a future PCB revision without any layout-level redesign.
+
+**Estimated added cost:** ~$4–6 (second LPS28DFWTR) + minor PCB area.
+
+#### Safety CPU / Supervisory MCU
+
+A dedicated supervisory microcontroller monitors the primary RP2040 and forces a safe state on failure:
+
+- **Hardware watchdog pattern:** The RP2040 firmware services a watchdog signal to the safety MCU on a fixed interval (e.g. every 100 ms). If the safety MCU does not receive the signal within the timeout window — indicating a crash, hang, or runaway loop — it asserts a hardware reset or output-disable line, cutting the sip/puff outputs before any erroneous command reaches the XAC or AT device.
+- **Suitable ICs:** A small supervisory MCU such as an STM32G0 series (QFN-20, ~$1–2) running minimal watchdog firmware is sufficient for this role. A full safety-rated MCU (TI TMS570, Renesas RH850) would be required for IEC 61508 SIL-rated applications but is likely overkill for a Class II AT device.
+- **PCB footprint:** A QFN-20 supervisory MCU adds modest PCB area and could be accommodated in a future PCB revision alongside the existing Pico W.
+
+**Estimated added cost:** ~$2–5 (supervisory MCU) + programming header + PCB area.
+
+#### Firmware and Process Scope (IEC 62304)
+
+Moving to a certified build requires not just hardware additions but a software development process:
+
+- Formal software requirements specification
+- Hazard analysis (ISO 14971) covering failure modes of both sensors, the MCU, the I²C bus, and the output circuit
+- Unit and integration testing with documented coverage targets (IEC 62304 Class B: statement coverage; Class C: branch coverage)
+- Change control and version traceability
+- Clinical evaluation or usability testing (IEC 62366)
+
+This is a substantial undertaking, estimated at months of engineering effort for a small team. It is not planned for the current open-source prototype. The open-source codebase can serve as the starting point for a certified variant, with the process artefacts built around it.
+
+#### Design Decisions That Preserve the Certification Path
+
+The following choices made in the current design do not close off the certification pathway:
+
+- LPS28DFWTR supports dual I²C addressing — second sensor can be added without PCB redesign
+- Opto-isolated XAC outputs (PC817SC) provide a clean electrical boundary for fault containment
+- STEMMA QT and EXTERNAL_IO connectors provide expansion points for a supervisory MCU interface
+- Open-source firmware is fully accessible for process wrapping — no black-box components
+
+> **Current status:** Not planned for prototype. Noted to ensure that architectural decisions made now keep the certified variant viable, and to give the community a documented roadmap if anyone chooses to pursue it.
+
+#### Project Author's Prior FDA Experience
+
+The lead designer of this project has prior hands-on involvement in the design and manufacture of an FDA-regulated medical device — a lithium battery system for power wheelchairs, developed in conjunction with an established power wheelchair manufacturer. That collaboration provided direct exposure to FDA quality system requirements (21 CFR Part 820), design controls, risk management processes, and the realities of regulated manufacturing. The certification pathway described in this section is informed by that experience — the kinds of hardware decisions that preserve or foreclose a future certification path are familiar territory. If the project generates sufficient community interest, a certified variant is a realistic rather than purely aspirational goal.
+
+---
+
+*Last updated: April 2026. Section 10.7 added — medical certification pathway documented. Section 10.6 added — circuit protection documented. Sections 10.4 and 10.5 added — sensor decision and display hardware documented. Section 10.3 IMU timeline updated to post-Maker-Faire.*
 
 ---
 
