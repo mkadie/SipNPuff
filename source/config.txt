@@ -1,0 +1,126 @@
+# T-Rex Sip-N-Puff user configuration.
+#
+# This file lives at the root of the CIRCUITPY drive. Edit it with
+# any text editor and unplug/replug the Pico to reload. Anything
+# not listed here keeps the default from hardware_config.py.
+#
+# Format: key=value. Lines starting with # are comments. Only the
+# whitelisted keys in hardware_config._USER_OVERRIDABLE are honored.
+
+# --- Mode -----------------------------------------------------------
+# run         : normal operation — drives encoder + XAC outputs
+# diagnostic  : streams sensor data to serial, NO outputs driven.
+#               Use this on the bench to pick thresholds.
+mode = run
+
+# --- Logging --------------------------------------------------------
+verbose = true
+
+# --- Breath thresholds (kPa above baseline) -------------------------
+# puff_on_kpa  : pressure that triggers a puff
+# puff_off_kpa : must drop below this to release (hysteresis)
+# Sip values are negative (sensor sees negative differential).
+puff_on_kpa  =  0.30
+puff_off_kpa =  0.20
+sip_on_kpa   = -0.30
+sip_off_kpa  = -0.20
+
+# --- Timings --------------------------------------------------------
+# Two puffs whose release-to-press gap is below double_puff_window_s
+# combine into a "double_puff" — fires encoder button + double-pulse
+# on the XAC puff jack.
+double_puff_window_s = 0.45
+# Symmetric for sip — fires double-pulse on the XAC sip jack.
+double_sip_window_s = 0.45
+# Continuous puff/sip longer than hold_to_repeat_s starts emitting
+# repeat ticks at a pressure-scaled rate.
+hold_to_repeat_s = 0.40
+repeat_min_hz = 3.0
+repeat_max_hz = 20.0
+repeat_full_scale_kpa = 3.0
+
+# --- Output pulse widths -------------------------------------------
+encoder_phase_s = 0.002
+encoder_button_press_s = 0.05
+xac_pulse_s = 0.05
+# Gap between the two halves of a double-pulse on the XAC line.
+xac_double_gap_s = 0.05
+
+# --- Startup --------------------------------------------------------
+# Seconds spent learning the no-breath baseline. User must NOT
+# touch the mouthpiece during this window.
+baseline_calibrate_s = 1.5
+
+# --- Loop tuning ----------------------------------------------------
+poll_period_s = 0.005
+pressure_oversample = 16
+
+# --- Display --------------------------------------------------------
+# SPI bus + control pins are fixed on the PCB:
+#   SCK=GP10 MOSI=GP11 MISO=GP12  CS=GP13 DC=GP14 RST=GP15 LED=GP16
+#
+# Pick a preset that matches the panel you plugged in. To disable
+# the LCD entirely (or drive it from a one-off custom config) set
+# display_enabled = false or display_preset = none.
+#
+# Available presets (set display_preset = ...):
+#
+#   none                          ← no preset; use individual fields
+#
+#   ST7735R (most "1.8 inch SPI TFT" Aliexpress / Amazon listings):
+#   st7735r_128x160_greentab      ← TRY THIS FIRST for a 1.8" panel
+#   st7735r_128x160_redtab
+#   st7735r_128x160_blacktab
+#   st7735r_128x128               ← 1.44" square
+#   st7735r_80x160                ← 0.96" wide
+#
+#   ST7789 (many "1.8/2.0/2.4 inch IPS" Aliexpress modules from 2024+):
+#   st7789_240x240                ← 1.3" / 1.5" IPS square
+#   st7789_240x320                ← 2.0" / 2.4" IPS portrait
+#   st7789_135x240                ← 1.14" Pico-Display style
+#
+#   ILI9341 (2.2" / 2.4" / 2.8" / 3.2" 240x320 panels):
+#   ili9341_240x320
+#
+#   GC9A01 (1.28" round):
+#   gc9a01_240x240_round
+#
+#   SSD1306 (I2C OLED — uses J1 connector, GP4/GP5):
+#   ssd1306_128x64_i2c            ← 1" / 0.96" / 1.3" most common OLED
+#   ssd1306_128x32_i2c            ← skinnier 128x32 variant
+#
+# If the boot R/G/B/W self-test stays solid white, the panel isn't
+# accepting our pixel data — try another preset, OR check that
+# DC/CS/RST are wired to GP14/GP13/GP15 respectively.
+# Color LCD on SPI1 (GP10–16). LPS28 stays on I2C so the two
+# coexist — see the override block at the bottom for SDA/SCL pins.
+display_enabled = true
+# --- Active variant: SSD1306 OLED on shared I2C0 -------------------
+# This board has the 128x64 SSD1306 OLED on J1 (GP4 SDA / GP5 SCL),
+# and the LPS28 absolute-pressure sensor on the same bus at 0x5C.
+# The two coexist at distinct addresses; sip_puff_device creates a
+# single busio.I2C and shares it with both.
+#
+# To switch back to the LCD variant, set:
+#     display_preset = st7735r_128x160_greentab
+#     display_controller = st7735r
+#     display_width = 160
+#     display_height = 128
+#     display_rotation = 90
+display_preset = ssd1306_128x64_i2c
+display_update_hz = 10
+# R/G/B/W flash is meaningless on a mono OLED — leave it off.
+display_test_pattern = false
+# SPI baudrate is unused for the SSD1306, kept here for the LCD
+# variant.
+display_baudrate = 4000000
+
+# --- I2C pins (J1 connector) ---------------------------------------
+# Used by both the SSD1306 OLED (0x3C) and the LPS28 (0x5C). The
+# firmware scans the bus on boot — the serial console prints whatever
+# I2C addresses respond on whichever pair you pick.
+display_i2c_sda_pin = GP4
+display_i2c_scl_pin = GP5
+# display_i2c_address defaults to 0x3C — uncomment + set to 61 (decimal)
+# only if your OLED is strapped to the alternate 0x3D address.
+display_i2c_frequency = 100000
