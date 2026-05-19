@@ -39,9 +39,10 @@ class _OpenDrainOutput:
     half of the cycle never actually pulls to 0 V. To sidestep that,
     we manage open-drain ourselves by flipping ``direction``:
 
-      * ``value = True``  → ``direction = INPUT`` (pin is high-Z, host
-        pull-up wins). Pull set to None so we never source through an
-        internal pull-up either.
+      * ``value = True``  → ``direction = INPUT``. If ``pull_up`` is
+        True the pin enables the internal pull-up (~50 kΩ to 3.3 V) so
+        the line floats up like a real switch's pull-up; otherwise pull
+        is None and a host-side pull-up must supply the high level.
       * ``value = False`` → ``direction = OUTPUT`` and the line is
         driven actively to 0 V.
 
@@ -49,8 +50,9 @@ class _OpenDrainOutput:
     ``digitalio.DigitalInOut`` so callers stay unchanged.
     """
 
-    def __init__(self, pin, initial=True):
+    def __init__(self, pin, initial=True, pull_up=False):
         self._io = digitalio.DigitalInOut(pin)
+        self._pull_up = bool(pull_up)
         self._value = None
         self.value = initial
 
@@ -63,8 +65,14 @@ class _OpenDrainOutput:
         v = bool(v)
         if v:
             self._io.direction = digitalio.Direction.INPUT
-            self._io.pull = None
+            self._io.pull = (digitalio.Pull.UP if self._pull_up else None)
         else:
+            # Drive low. Disable the pull *first* (while we're still
+            # in INPUT mode so the pull setter accepts the write) so
+            # the internal pull-up isn't sourcing into our active
+            # sink — guarantees the line reaches 0 V cleanly.
+            if self._io.direction == digitalio.Direction.INPUT:
+                self._io.pull = None
             self._io.direction = digitalio.Direction.OUTPUT
             self._io.value = False
         self._value = v
@@ -86,16 +94,22 @@ def _make_output(pin, initial=True, drive_mode="push_pull"):
 
     ``drive_mode`` is one of:
       * ``"push_pull"`` (default) — actively drives 3.3 V high and
-        0 V low. Use this when the host's encoder input has no
-        pull-up of its own, or whenever you want guaranteed levels
-        on both edges.
-      * ``"open_drain"`` — sinks to 0 V on low, floats on high. The
-        host's pull-up determines the high voltage. Safer interop
-        with 5 V hosts, but requires the host to have a pull-up.
+        0 V low. Stiff output; works against any host but fights
+        any host pull-up the line might already have.
+      * ``"simulated_pullup"`` — high state is the Pico's internal
+        pull-up (~50 kΩ to 3.3 V), low state actively sinks to 0 V.
+        Emulates a real mechanical encoder/switch: line idles high
+        via a soft pull-up, snaps low only while pressed.
+      * ``"open_drain"`` — like ``simulated_pullup`` but **without**
+        the internal pull-up; the high state is fully high-Z and a
+        host-side pull-up must supply the high level. Safer interop
+        with 5 V hosts than ``simulated_pullup``.
     """
     mode = (drive_mode or "push_pull").strip().lower()
+    if mode == "simulated_pullup":
+        return _OpenDrainOutput(pin, initial=initial, pull_up=True)
     if mode == "open_drain":
-        return _OpenDrainOutput(pin, initial=initial)
+        return _OpenDrainOutput(pin, initial=initial, pull_up=False)
     return _make_push_pull(pin, initial=initial)
 
 
@@ -115,6 +129,17 @@ class EncoderEmulator:
         # BTN2). See _make_output() for the trade-offs.
         self._drive_mode     = str(config.get(
             "encoder_drive_mode", "push_pull")).strip().lower()
+        # Click protocol on A/B — see click_cw / click_ccw.
+        #   "pulse_encoder"   = momentary pulse on a single line per
+        #                       click (A for CW, B for CCW). XAC-style.
+        #   "5_phase_encoder" = full gray-code quadrature sequence.
+        self._protocol = str(config.get(
+            "encoder_protocol", "pulse_encoder")).strip().lower()
+        # When true, press2() (short-sip) drives the encoder shaft
+        # button (BTN, GP20) instead of BTN2 (GP21). Hosts with only
+        # one "select" input wire short-puff and short-sip together.
+        self._fold_btn2_onto_btn = bool(config.get(
+            "map_both_clicks_to_encoder_button", False))
 
         self._a    = None
         self._b    = None
@@ -135,9 +160,11 @@ class EncoderEmulator:
                 drive_mode=self._drive_mode,
             )
             self._available = True
-            print("Encoder: A={} B={} BTN={} (phase={:.4f}s, drive={})".format(
-                config["enc_a_pin"], config["enc_b_pin"],
-                config["enc_btn_pin"], self._phase_s, self._drive_mode))
+            print("Encoder: A={} B={} BTN={} "
+                  "(phase={:.4f}s, drive={}, protocol={})".format(
+                      config["enc_a_pin"], config["enc_b_pin"],
+                      config["enc_btn_pin"], self._phase_s,
+                      self._drive_mode, self._protocol))
         except Exception as e:
             print("Encoder: init failed ({})".format(e))
             return
@@ -164,14 +191,27 @@ class EncoderEmulator:
     # --- Public actions ------------------------------------------
 
     def click_cw(self):
-        """Emit one clockwise (positive) quadrature click."""
-        self._emit_sequence(_CW_SEQ)
+        """Emit one clockwise (positive) click.
+
+        In ``5_phase_encoder`` mode this runs the full gray-code
+        quadrature sequence on A+B. In ``pulse_encoder`` mode (the
+        default) it just pulses the A line low like a button press
+        — which is what the XAC and similar dry-contact hosts want,
+        since they don't decode quadrature.
+        """
+        if self._protocol == "5_phase_encoder":
+            self._emit_sequence(_CW_SEQ)
+        else:
+            self._pulse_button(self._a, "CW pulse")
         if self._verbose:
             print("Encoder: CW click")
 
     def click_ccw(self):
-        """Emit one counter-clockwise (negative) quadrature click."""
-        self._emit_sequence(_CCW_SEQ)
+        """Emit one counter-clockwise (negative) click. See click_cw."""
+        if self._protocol == "5_phase_encoder":
+            self._emit_sequence(_CCW_SEQ)
+        else:
+            self._pulse_button(self._b, "CCW pulse")
         if self._verbose:
             print("Encoder: CCW click")
 
@@ -184,7 +224,18 @@ class EncoderEmulator:
         self._pulse_button(self._btn, "BTN")
 
     def press2(self):
-        """Pulse the second button once. No-op if BTN2 wasn't configured."""
+        """Pulse the second button once.
+
+        Normally drives BTN2 (GP21). When the config flag
+        ``map_both_clicks_to_encoder_button`` is true, falls back to
+        the encoder shaft button (BTN, GP20) so a host with only one
+        "select" input sees both short-puff and short-sip as the
+        same press. No-op if BTN2 wasn't configured and the fallback
+        line is also unavailable.
+        """
+        if self._fold_btn2_onto_btn:
+            self._pulse_button(self._btn, "BTN (mapped from BTN2)")
+            return
         if self._btn2 is None:
             return
         self._pulse_button(self._btn2, "BTN2")

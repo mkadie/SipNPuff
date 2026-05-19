@@ -326,13 +326,38 @@ xac_pulse_s            = 0.05
 xac_double_gap_s       = 0.05
 
 # Drive mode for the encoder A / B / BTN / BTN2 output lines.
-#   push_pull  (default) — actively drives 3.3 V high and 0 V low.
-#                          Works against any host, no external
-#                          pull-ups required.
-#   open_drain           — only sinks to 0 V; the high state is
-#                          high-Z and the host must provide its own
-#                          pull-up. Safer interop with a 5 V host.
+#   push_pull         — actively drives 3.3 V high and 0 V low.
+#                       Stiff output; fights any host pull-up.
+#   simulated_pullup  (default) — high state is the Pico's internal
+#                       pull-up (~50 kΩ to 3.3 V), low state actively
+#                       sinks to 0 V. Emulates a real mechanical
+#                       encoder / switch — line idles high via a
+#                       soft pull-up, snaps low only while pressed.
+#   open_drain        — like simulated_pullup but without the
+#                       internal pull-up; host must supply its own.
+#                       Safer interop with 5 V hosts.
 encoder_drive_mode = push_pull
+
+# Signal protocol on the A/B lines for one "click":
+#   pulse_encoder    (default) — each click momentarily pulses ONE
+#                                 line low (A for CW, B for CCW),
+#                                 same shape as the BTN/BTN2 press.
+#                                 This is what the Xbox Adaptive
+#                                 Controller and similar dry-contact
+#                                 hosts want — they're reading each
+#                                 wire as an independent switch, not
+#                                 decoding quadrature.
+#   5_phase_encoder            — emits the full gray-code quadrature
+#                                 sequence (A+B both move per click)
+#                                 for hosts that actually decode a
+#                                 real rotary encoder.
+encoder_protocol = pulse_encoder
+
+# When true, short-sip falls back to pulsing the encoder shaft
+# button (BTN, GP20) instead of BTN2 (GP21). Use when the receiving
+# device has only one "select" wire and you want both short-puff
+# and short-sip to register as the same press.
+map_both_clicks_to_encoder_button = false
 
 # =====================================================================
 # STARTUP

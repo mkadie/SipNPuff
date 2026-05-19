@@ -251,25 +251,52 @@ hardware that isn't there.
 
 Configurable via `encoder_drive_mode`:
 
-| Value          | Behavior                                                       |
-|----------------|----------------------------------------------------------------|
-| `push_pull`    | (default) Drives 3.3 V high and 0 V low. Works against any host. |
-| `open_drain`   | Sinks to 0 V on low, **floats** on high. Host pull-up determines high voltage. Safer interop with a 5 V host. |
+| Value              | High state | Low state | Notes |
+|--------------------|------------|-----------|-------|
+| `push_pull` (default) | Actively driven to 3.3 V | Actively driven to 0 V | Stiff output; fights any host pull-up. Works against any host. |
+| `simulated_pullup` | Internal pull-up (~50 kΩ to 3.3 V), high-Z otherwise | Actively driven to 0 V | Emulates a real mechanical encoder switch — line idles high via the soft pull-up, snaps low only while pressed. |
+| `open_drain`       | High-Z, no internal pull | Actively driven to 0 V | Host must supply its own pull-up. Safer interop with a 5 V host. |
 
 Applies to all four encoder output lines (A, B, BTN, BTN2). The
-open-drain path doesn't rely on CircuitPython's
-`DriveMode.OPEN_DRAIN` — it manages high-Z by flipping
-`direction` between `OUTPUT` (low) and `INPUT` (high-Z) since the
-documented `DriveMode.OPEN_DRAIN` on RP2040 has been observed
-leaving the line in an undefined state for the "low" half of the
-cycle on this CP build. See the `_OpenDrainOutput` class in
+`simulated_pullup` and `open_drain` paths don't rely on
+CircuitPython's `DriveMode.OPEN_DRAIN` — they manage high-Z by
+flipping `direction` between `OUTPUT` (low) and `INPUT` (high-Z),
+because the documented `DriveMode.OPEN_DRAIN` on RP2040 has been
+observed leaving the line in an undefined state for the "low" half
+of the cycle on this CP build. See the `_OpenDrainOutput` class in
 `encoder_emulator.py`.
 
 Boot log prints the active mode:
 
 ```
-Encoder: A=GP18 B=GP19 BTN=GP20 (phase=0.0020s, drive=push_pull)
+Encoder: A=GP18 B=GP19 BTN=GP20 (phase=0.0020s, drive=push_pull, protocol=pulse_encoder)
 ```
+
+## 5c. Encoder click protocol
+
+Configurable via `encoder_protocol`:
+
+| Value              | CW click action | CCW click action |
+|--------------------|-----------------|------------------|
+| `pulse_encoder` (default) | Pulses **A only** low for `encoder_button_press_s` (50 ms) | Pulses **B only** low for the same window |
+| `5_phase_encoder` | Full gray-code quadrature sequence on A+B (5 phases × `encoder_phase_s`) | Mirror sequence |
+
+`pulse_encoder` is the default because the **Xbox Adaptive
+Controller and similar dry-contact hosts read each wire as an
+independent momentary switch** — they don't decode rotary-encoder
+quadrature. Each click becomes one button press on the destination
+wire. For hosts that *do* decode quadrature (the T-Rex Talker's
+encoder header, generic encoder breakouts), switch to
+`5_phase_encoder`.
+
+BTN and BTN2 are always pulsed regardless of protocol.
+
+### Folding BTN2 onto BTN
+
+For hosts with only **one** "select" input, set
+`map_both_clicks_to_encoder_button = true`. Then `press2()` (short
+sip) drives BTN (GP20) instead of BTN2 (GP21) — both short-puff and
+short-sip register as the same press. Default `false`.
 
 ---
 
@@ -346,7 +373,9 @@ added during this work, grouped:
 - `repeat_rate_curve` (`linear` / future `logarithmic`)
 
 ### Encoder outputs
-- `encoder_drive_mode = push_pull | open_drain` (default `push_pull`)
+- `encoder_drive_mode = push_pull | simulated_pullup | open_drain` (default `push_pull`)
+- `encoder_protocol = pulse_encoder | 5_phase_encoder` (default `pulse_encoder`)
+- `map_both_clicks_to_encoder_button = true | false` (default `false`)
 
 ### Pointing (mouse mode)
 - `imu_pointing_gain`, `imu_pointing_alpha`,

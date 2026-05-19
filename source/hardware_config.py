@@ -441,6 +441,18 @@ _USER_OVERRIDABLE = (
     # "push_pull" (default) drives high and low actively;
     # "open_drain" sinks low, floats high (host pull-up required).
     "encoder_drive_mode",
+    # Signal protocol on the A/B lines for a "click":
+    # "pulse_encoder" (default) — each click pulses ONE line low
+    #   (A for CW, B for CCW). Each line behaves like a momentary
+    #   button. This is what the Xbox Adaptive Controller wants.
+    # "5_phase_encoder" — full gray-code quadrature sequence per
+    #   click on the A+B pair. For hosts that actually decode a
+    #   real rotary encoder.
+    "encoder_protocol",
+    # When true, BTN2 (short-sip) is folded onto BTN (GP20) so both
+    # short-puff and short-sip pulse the same encoder button pin.
+    # Useful when the host has only one "select" input.
+    "map_both_clicks_to_encoder_button",
 )
 
 
