@@ -123,6 +123,25 @@ class LPS28Sensor:
 
     # --- Calibration ---------------------------------------------
 
+    def recenter_now(self):
+        """Snap the baseline so the next gauge_kpa() reads ~0.
+
+        Reads one fresh absolute sample and stores it as the new
+        baseline — much cheaper than rerunning calibrate_baseline()
+        when the user just wants to clear an accumulated drift.
+
+        Safe to call any time after init. Returns the new baseline.
+        """
+        if not self._available:
+            return self._baseline_kpa
+        new_baseline = self.read_pressure_kpa()
+        if new_baseline != 0.0:
+            self._baseline_kpa = new_baseline
+            if self._verbose:
+                print("LPS28: recenter -> baseline={:.4f}kPa".format(
+                    self._baseline_kpa))
+        return self._baseline_kpa
+
     def calibrate_baseline(self, duration_s=1.5):
         """Average readings over duration_s and store as baseline."""
         if not self._available:

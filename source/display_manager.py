@@ -101,6 +101,31 @@ class DisplayManager:
         self._t_next_update = 0.0
         self._last_rendered = None
 
+        # Event-indicator boxes at the bottom of the screen. Four
+        # named slots: "up", "down", "puff_click", "sip_click". The
+        # dispatcher calls flash(name) on every dispatched event;
+        # this module decides visibility:
+        #   * Click boxes (puff_click / sip_click): solid for
+        #     ``_box_solid_s`` after the event, then off.
+        #   * Stream boxes (up / down): visibility *toggles* with
+        #     each event so the user sees one flip per signal. After
+        #     ``_box_solid_s`` of silence the box goes off regardless
+        #     of its current parity.
+        self._box_rects        = {}     # name -> vectorio.Rectangle
+        self._box_last_event   = {}     # name -> time.monotonic()
+        self._box_flash_count  = {}     # name -> running event count
+        for _name in ("up", "down", "puff_click", "sip_click"):
+            self._box_last_event[_name]  = -1.0e9
+            self._box_flash_count[_name] = 0
+        # Click boxes (puff_click / sip_click) latch on for this long.
+        self._box_click_on_s   = 1.0
+        # Up/Down toggle per event; the box must go off if no new
+        # event arrives within this window so the user can see it
+        # "stop" once they release the breath. Also: the toggle
+        # naturally yields ~50% off-time at any event rate the
+        # refresh loop can keep up with.
+        self._box_stream_off_s = 0.5
+
         if not self._enabled:
             print("Display: disabled by config")
             return
@@ -157,6 +182,7 @@ class DisplayManager:
             import displayio
             import terminalio
             import digitalio
+            import vectorio
             from adafruit_display_text.label import Label
             from adafruit_display_shapes.rect import Rect
         except ImportError as e:
@@ -182,7 +208,8 @@ class DisplayManager:
                 self._self_test(displayio)
 
             # --- Build static scene ---
-            self._build_scene(displayio, terminalio, Label, Rect, config)
+            self._build_scene(displayio, terminalio, Label, Rect,
+                              vectorio, config)
             self._available = True
 
             res_w = self._display.width
@@ -436,15 +463,18 @@ class DisplayManager:
 
     # --- Scene -------------------------------------------------
 
-    def _build_scene(self, displayio, terminalio, Label, Rect, config):
+    def _build_scene(self, displayio, terminalio, Label, Rect, vectorio,
+                     config):
         if self._is_mono:
             # Framebuf driver — no displayio scene to build. Just
             # set up the geometry for update() to render against.
             self._setup_mono_geometry()
         else:
-            self._build_color_scene(displayio, terminalio, Label, Rect, config)
+            self._build_color_scene(displayio, terminalio, Label, Rect,
+                                    vectorio, config)
 
-    def _build_color_scene(self, displayio, terminalio, Label, Rect, config):
+    def _build_color_scene(self, displayio, terminalio, Label, Rect,
+                           vectorio, config):
         bg     = int(config["display_bg_color"])
         text_c = int(config["display_text_color"])
         puff_c = int(config["display_puff_color"])
@@ -510,9 +540,17 @@ class DisplayManager:
             root.append(Rect(self._bar_x, y_top,
                              self._bar_w, self._bar_h,
                              outline=text_c, fill=bg))
-            fill_rect = Rect(
-                self._bar_x + 1, y_top + 1, 1, self._bar_h - 2,
-                fill=fill_color)
+            # Fill bar — vectorio.Rectangle has a mutable .width, unlike
+            # adafruit_display_shapes.Rect which becomes read-only after
+            # construction in newer bundle releases. Without this the
+            # bars draw at their initial 1-pixel width and never grow,
+            # even though the numeric labels update every tick.
+            fill_pal = displayio.Palette(1)
+            fill_pal[0] = fill_color
+            fill_rect = vectorio.Rectangle(
+                pixel_shader=fill_pal,
+                width=1, height=max(1, self._bar_h - 2),
+                x=self._bar_x + 1, y=y_top + 1)
             root.append(fill_rect)
             # Threshold tick — only drawn when threshold_kpa > 0.
             # LPS rows pass 0 (no event semantics tied to LPS yet).
@@ -543,7 +581,56 @@ class DisplayManager:
             lps_sip_y, "LPS S", sip_c,
             0.0, self._lps_full_scale, " --- ")
 
+        # --- Bottom row: 4 event-indicator boxes ----------------------
+        # Slots, left-to-right: Up (CW), Dn (CCW), SipC (single sip),
+        # PufC (single puff). Each has a labelled outline + a filled
+        # vectorio.Rectangle whose .hidden is toggled at update() time.
+        self._build_event_boxes(displayio, Rect, Label, terminalio,
+                                vectorio, w, h, bg, text_c, puff_c, sip_c,
+                                root)
+
         self._display.root_group = root
+
+    def _build_event_boxes(self, displayio, Rect, Label, terminalio,
+                           vectorio, w, h, bg, text_c, puff_c, sip_c,
+                           root):
+        """Lay out the bottom-of-screen event indicator boxes."""
+        box_h    = 14
+        box_pad  = 4
+        gap      = 4
+        # Reserve a single row hugging the bottom — labels above, fills
+        # below. Total content height ≈ 22 px.
+        fill_y   = h - box_h - 2
+        label_y  = fill_y - 8
+        slots = (
+            ("up",         "UP",  puff_c),
+            ("down",       "DN",  sip_c),
+            ("sip_click",  "SIP", sip_c),
+            ("puff_click", "PUF", puff_c),
+        )
+        # Sized to fit four slots with gaps within the panel width.
+        total_gap = gap * (len(slots) - 1)
+        box_w = max(20, (w - 2 * box_pad - total_gap) // len(slots))
+        x = box_pad
+        for name, label_text, color in slots:
+            # Centred small label above the box.
+            root.append(Label(terminalio.FONT, text=label_text,
+                              color=text_c, x=x + 4, y=label_y))
+            # Static outline.
+            root.append(Rect(x, fill_y, box_w, box_h,
+                             outline=text_c, fill=bg))
+            # Toggleable fill — start hidden.
+            pal = displayio.Palette(1)
+            pal[0] = color
+            fill = vectorio.Rectangle(
+                pixel_shader=pal,
+                width=max(1, box_w - 2),
+                height=max(1, box_h - 2),
+                x=x + 1, y=fill_y + 1)
+            fill.hidden = True
+            root.append(fill)
+            self._box_rects[name] = fill
+            x += box_w + gap
 
     def _setup_mono_geometry(self):
         """Stash the per-frame mono layout coordinates.
@@ -596,6 +683,52 @@ class DisplayManager:
 
     # --- Per-frame update ---------------------------------------
 
+    def flash(self, name):
+        """Record an event for one of the indicator boxes.
+
+        Click boxes use solid-then-off; stream boxes toggle parity on
+        every call so each signal is a visible state change at rates
+        the refresh loop can keep up with. Fresh series after a long
+        gap always starts with the box ON, so the user catches the
+        first event regardless of previous parity.
+        """
+        if not self._available or name not in self._box_last_event:
+            return
+        now = time.monotonic()
+        last = self._box_last_event[name]
+        # Different "fresh series" thresholds for the two box kinds —
+        # but in both cases the next event should look like an ON pulse
+        # from a clean state.
+        gap_threshold = (self._box_stream_off_s
+                         if name in ("up", "down")
+                         else self._box_click_on_s)
+        if (now - last) > gap_threshold:
+            self._box_flash_count[name] = 1
+        else:
+            self._box_flash_count[name] += 1
+        self._box_last_event[name] = now
+
+    def _update_event_boxes(self, now):
+        """Apply the visibility rule per box."""
+        for name, rect in self._box_rects.items():
+            age = now - self._box_last_event[name]
+            if name in ("up", "down"):
+                # Toggle parity per event, but force OFF after the
+                # stream-off window so the box clears when the user
+                # releases. Parity gives ≈50% off naturally — at very
+                # high event rates the display refresh may not keep up
+                # and the box can appear stuck; that's a known limit.
+                if age > self._box_stream_off_s:
+                    visible = False
+                else:
+                    visible = (self._box_flash_count[name] % 2) == 1
+            else:
+                # Click boxes: solid for the whole on-window.
+                visible = age <= self._box_click_on_s
+            hide = not visible
+            if rect.hidden != hide:
+                rect.hidden = hide
+
     def update(self, p_kpa, state, lps_kpa=None):
         """Refresh the screen if enough time has passed.
 
@@ -613,6 +746,13 @@ class DisplayManager:
         if now < self._t_next_update:
             return
         self._t_next_update = now + self._update_period
+
+        # Event-indicator boxes must update every tick so the blink
+        # phase progresses even when the pressure values are stable —
+        # otherwise the short-circuit below would freeze the boxes
+        # during an idle interval.
+        if not self._is_mono:
+            self._update_event_boxes(now)
 
         # Skip the actual draw if nothing meaningful has changed.
         # Quantise pressures so ADC/LPS jitter doesn't trigger redraws.
@@ -657,12 +797,12 @@ class DisplayManager:
                               self._lps_full_scale)
                 self._set_bar(self._lps_sip_fill_rect,  lps_sip_mag,
                               self._lps_full_scale)
-                # 3 decimals — LPS gauge readings are typically in
-                # the 0.001–0.1 kPa band.
-                self._lps_puff_value_label.text = "{:.3f}".format(
-                    lps_puff_mag)
-                self._lps_sip_value_label.text  = "{:.3f}".format(
-                    lps_sip_mag)
+                # Label precision matches the configured full scale —
+                # 3 decimals for tight (≤0.5 kPa) ranges where every
+                # millibar matters, 2 decimals once the bar spans kPa.
+                fmt = "{:.3f}" if self._lps_full_scale < 0.5 else "{:.2f}"
+                self._lps_puff_value_label.text = fmt.format(lps_puff_mag)
+                self._lps_sip_value_label.text  = fmt.format(lps_sip_mag)
         except Exception as e:
             if self._verbose:
                 print("Display: update error ({})".format(e))
@@ -754,12 +894,8 @@ class DisplayManager:
         return max(1, px)
 
     def _set_bar(self, rect, magnitude_kpa, full_scale=None):
-        try:
-            rect.width = self._bar_pixels(magnitude_kpa, full_scale)
-        except AttributeError:
-            # Older display_shapes builds: width is read-only. Quietly
-            # skip — bar gets stuck at last value rather than crashing.
-            pass
+        # rect is a vectorio.Rectangle whose width property is mutable.
+        rect.width = self._bar_pixels(magnitude_kpa, full_scale)
 
 
 # ===================================================================

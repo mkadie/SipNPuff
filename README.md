@@ -35,6 +35,13 @@ No other project in the open-source sip and puff space offers this level of reco
 
 Early, rapid development for prototype by Maker event, which one ... hopefully the next one :)
 
+> **Firmware reference:** see [`FIRMWARE_NOTES.md`](./FIRMWARE_NOTES.md)
+> for the current state of the CircuitPython firmware — pressure-sensor
+> fusion, event-classifier rules, the on-screen HUD layout, the repeat-rate
+> map, IMU pointing, and the full config-key reference. That's the document
+> to read before touching `source/breath_classifier.py`,
+> `source/sip_puff_device.py`, or any `config.txt` on a deployed device.
+
 ## Core Mission
 
 ### Primary Focus: Flexibility Through Text File Configuration

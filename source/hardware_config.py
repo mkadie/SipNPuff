@@ -45,6 +45,10 @@ VARIANTS = {
         "enc_a_pin":   "GP18",
         "enc_b_pin":   "GP19",
         "enc_btn_pin": "GP20",
+        # Second momentary-button output: short sip in encoder mode.
+        # Wired as a sibling of enc_btn — tie host-side as another
+        # button-to-GND switch with its own pull-up.
+        "enc_btn2_pin": "GP21",
         # Quadrature half-period: time spent in each of the 4 phases
         # of one click. 2 ms gives a 4 ms click — well below typical
         # mechanical encoder rates and easy for any host to capture.
@@ -157,6 +161,94 @@ VARIANTS = {
 
 
 DEFAULT_VARIANT = "pico2_mpx5010dp"
+
+
+# --- English-readable display aliases ---------------------------
+#
+# Values accepted by the user-facing ``display = ...`` key in
+# config.txt. Whitespace and case are normalised before lookup, so
+# all of these resolve identically:
+#
+#     display = SSD1306 OLED 128x64
+#     display = ssd1306_oled_128x64
+#     display = ssd1306-oled-128x64
+#
+# The right-hand side is the existing DISPLAY_PRESETS key.
+DISPLAY_ALIASES = {
+    "none":                              "none",
+    "off":                               "none",
+    "disabled":                          "none",
+    "ssd1306 oled 128x64":               "ssd1306_128x64_i2c",
+    "ssd1306 oled 128x32":               "ssd1306_128x32_i2c",
+    "st7735r color lcd 128x160 greentab": "st7735r_128x160_greentab",
+    "st7735r color lcd 128x160 redtab":   "st7735r_128x160_redtab",
+    "st7735r color lcd 128x160 blacktab": "st7735r_128x160_blacktab",
+    "st7735r color lcd 128x128":         "st7735r_128x128",
+    "st7735r color lcd 80x160":          "st7735r_80x160",
+    "st7789 color lcd 240x240":          "st7789_240x240",
+    "st7789 color lcd 240x320":          "st7789_240x320",
+    "st7789 color lcd 135x240":          "st7789_135x240",
+    "ili9341 color lcd 240x320":         "ili9341_240x320",
+    "gc9a01 color lcd 240x240 round":    "gc9a01_240x240_round",
+}
+
+
+def _normalize_alias(value):
+    """Lowercase + collapse [_-] into spaces + squeeze whitespace.
+    Lets the user write `SSD1306 OLED 128x64`, `ssd1306-oled-128x64`,
+    or `ssd1306_oled_128x64` interchangeably.
+    """
+    s = str(value).strip().lower().replace("_", " ").replace("-", " ")
+    return " ".join(s.split())
+
+
+# --- I2C device names ------------------------------------------
+#
+# Values accepted by ``i2c_pressure`` and ``i2c_imu_1..4`` in
+# config.txt. The optional ``@0xNN`` suffix locks an address; without
+# it the driver auto-detects across the chip's strap options.
+I2C_DEVICE_KINDS = {
+    "lps28":   {"driver": "lps28",   "default_addrs": (0x5C, 0x5D)},
+    "bno085":  {"driver": "bno08x",  "default_addrs": (0x4A, 0x4B)},
+    "bno086":  {"driver": "bno08x",  "default_addrs": (0x4A, 0x4B)},
+    "bno080":  {"driver": "bno08x",  "default_addrs": (0x4A, 0x4B)},
+    "bno055":  {"driver": "bno055",  "default_addrs": (0x28, 0x29)},
+}
+
+# Slots whose value is parsed as a device-spec ("kind[@0xNN]") rather
+# than coerced. Listing them here lets the parser keep the raw string
+# instead of munging it through _coerce.
+_I2C_SLOT_KEYS = (
+    "i2c_pressure",
+    "i2c_imu_1", "i2c_imu_2", "i2c_imu_3", "i2c_imu_4",
+)
+
+
+def parse_i2c_device_spec(spec):
+    """Parse 'kind' or 'kind@0xNN' into (driver, addr_or_None).
+    Returns (None, None) for 'none' / blank / unknown kind so the
+    caller can simply skip the slot.
+    """
+    if spec is None:
+        return (None, None)
+    s = str(spec).strip().lower()
+    if not s or s in ("none", "off", "disabled"):
+        return (None, None)
+    kind, _, tail = s.partition("@")
+    kind = kind.strip()
+    info = I2C_DEVICE_KINDS.get(kind)
+    if info is None:
+        print("I2C: unknown device kind '{}'".format(kind))
+        return (None, None)
+    addr = None
+    tail = tail.strip()
+    if tail:
+        try:
+            addr = int(tail, 0)
+        except ValueError:
+            print("I2C: bad address '{}' for {}; using auto-detect".format(
+                tail, kind))
+    return (info["driver"], addr)
 
 
 # --- LCD panel presets -------------------------------------------
@@ -290,10 +382,65 @@ _USER_OVERRIDABLE = (
     "display_test_pattern", "display_baudrate",
     "display_width", "display_height",
     "display_i2c_address", "display_i2c_frequency",
+    "display_lps_full_scale_kpa",
     # Pin overrides for the I2C bus only — whitelisted because
     # different prototype boards wire the OLED to different pin
     # pairs. (Other pin assignments stay locked to avoid bricks.)
     "display_i2c_sda_pin", "display_i2c_scl_pin",
+    # English-readable display selector and non-display I2C slots.
+    "display",
+    "i2c_pressure",
+    "i2c_imu_1", "i2c_imu_2", "i2c_imu_3", "i2c_imu_4",
+    # Pointing tunables for IMU-as-mouse builds.
+    "imu_pointing_gain", "imu_pointing_deadband_dps",
+    "imu_pointing_alpha", "imu_pointing_accel_expo",
+    "imu_pointing_max_per_tick", "imu_pointing_stillness_recenter_s",
+    "imu_yaw_axis", "imu_pitch_axis",
+    # Heartbeat rate of the live serial-stream line.
+    "heartbeat_period_s",
+    # Output mode: "encoder" (default, drives wired encoder + buttons)
+    # or "mouse" (drives USB HID mouse).
+    "output_mode",
+    # Mouse-mode tunables.
+    "mouse_motion_min_per_tick", "mouse_scroll_per_repeat",
+    # Repeat-scroll multipliers: emit N CW/CCW clicks per puff_repeat /
+    # sip_repeat event. Asymmetric defaults handy when one direction
+    # of the breath is physically harder than the other.
+    "puff_repeat_multiplier", "sip_repeat_multiplier",
+    # Per-direction hold-to-repeat thresholds. Override the symmetric
+    # hold_to_repeat_s for asymmetric breath profiles — typically the
+    # sip side gets a longer tap window because sips ramp up slower
+    # than puffs and tend to overshoot 0.4 s.
+    "puff_hold_to_repeat_s", "sip_hold_to_repeat_s",
+    # Adaptive release — release threshold scales with how deep the
+    # current breath went past its on-threshold, so a deliberate tap
+    # exits state quickly even when the user can't snap-release.
+    "adaptive_release_enabled",
+    "adaptive_release_fraction",
+    "adaptive_release_min_gap_kpa",
+    # When true (and LPS28 is on the bus), use LPS28's signed gauge
+    # for the *sip* branch of the classifier — the MPX5010DP can't
+    # measure below 0 kPa so it caps the sip signal at the sensor's
+    # saturation floor.
+    "sip_from_lps28",
+    # Symmetric switch for the puff branch. With both true, classifier
+    # inputs come exclusively from the LPS28.
+    "puff_from_lps28",
+    # Repeat-rate map: rate_hz = magnitude_kpa * repeat_rate_factor,
+    # clamped to [repeat_min_hz, repeat_max_hz]. See breath_classifier
+    # for the formula and the planned logarithmic alternative.
+    "repeat_rate_factor", "repeat_rate_curve",
+    # LPS28 auto-rezero: after N s of stable idle, snap the baseline
+    # so the gauge reads zero again. 0 disables.
+    "lps_auto_rezero_idle_s", "lps_auto_rezero_threshold_kpa",
+    # Per-direction signal scaling — multiplies the gauge signal on
+    # that side before the classifier sees it. Compensates for
+    # asymmetric breath effort.
+    "puff_signal_scale", "sip_signal_scale",
+    # Drive mode for the encoder A/B/BTN/BTN2 lines:
+    # "push_pull" (default) drives high and low actively;
+    # "open_drain" sinks low, floats high (host pull-up required).
+    "encoder_drive_mode",
 )
 
 
@@ -335,7 +482,13 @@ def _load_user_config(path="/config.txt"):
                 key, _, val = line.partition("=")
                 key = key.strip()
                 if key in _USER_OVERRIDABLE:
-                    out[key] = _coerce(val)
+                    # I2C slot values are parsed downstream as
+                    # 'kind[@0xNN]' specs — keep them raw so we don't
+                    # accidentally coerce '0x4A' to int(74).
+                    if key in _I2C_SLOT_KEYS:
+                        out[key] = val.strip()
+                    else:
+                        out[key] = _coerce(val)
     except OSError:
         # No config.txt present — defaults are fine.
         pass
@@ -357,6 +510,23 @@ def load_config(variant=None, user_path="/config.txt"):
         name = DEFAULT_VARIANT
     cfg = dict(VARIANTS[name])
     user = _load_user_config(user_path)
+
+    # The English-readable ``display = ...`` key takes precedence
+    # over the legacy ``display_preset = ...`` key — it's what new
+    # config.txt files use. Both resolve to the same DISPLAY_PRESETS
+    # entry; the alias is normalised (case + separators) before lookup.
+    if "display" in user:
+        normalized = _normalize_alias(user["display"])
+        preset_key = DISPLAY_ALIASES.get(normalized)
+        if preset_key is None:
+            print("Display: unknown 'display = {}'. Known: {}".format(
+                user["display"], ", ".join(sorted(DISPLAY_ALIASES.keys()))))
+        elif preset_key == "none":
+            cfg["display_enabled"] = False
+            print("Display: disabled (display = none)")
+        else:
+            user.setdefault("display_preset", preset_key)
+            cfg["display_enabled"] = True
 
     # Apply LCD preset BEFORE individual user overrides so a single
     # preset name in config.txt sets the controller + dimensions +

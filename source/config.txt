@@ -4,123 +4,345 @@
 # any text editor and unplug/replug the Pico to reload. Anything
 # not listed here keeps the default from hardware_config.py.
 #
-# Format: key=value. Lines starting with # are comments. Only the
-# whitelisted keys in hardware_config._USER_OVERRIDABLE are honored.
+# Format: key = value. Lines starting with # are comments.
 
-# --- Mode -----------------------------------------------------------
-# run         : normal operation — drives encoder + XAC outputs
+# =====================================================================
+# RUN MODE
+# =====================================================================
+# run         : normal operation — drives encoder/mouse + XAC outputs
 # diagnostic  : streams sensor data to serial, NO outputs driven.
-#               Use this on the bench to pick thresholds.
-mode = run
-
-# --- Logging --------------------------------------------------------
+mode    = run
 verbose = true
 
-# --- Breath thresholds (kPa above baseline) -------------------------
-# puff_on_kpa  : pressure that triggers a puff
-# puff_off_kpa : must drop below this to release (hysteresis)
-# Sip values are negative (sensor sees negative differential).
-puff_on_kpa  =  0.30
-puff_off_kpa =  0.20
-sip_on_kpa   = -0.30
-sip_off_kpa  = -0.20
+# =====================================================================
+# OUTPUT MODE
+# =====================================================================
+# encoder : wired rotary-encoder + buttons. Drives:
+#             - GP18 / GP19 = quadrature A/B (CW = puff, CCW = sip)
+#             - GP20        = encoder pushbutton (short puff)
+#             - GP21        = button 2 (short sip)
+#             - GP0 / GP1   = XAC opto pulses, fired in sync with
+#                             every CW/CCW rotation tick as well as
+#                             the short puff/sip button presses.
+#           Use this to feed the T-Rex Talker's encoder port and any
+#           other device that reads quadrature + button closures.
+#           NOTE: at default repeat_max_hz = 20 and xac_pulse_s = 0.05
+#           the XAC pulses run back-to-back during a sustained breath.
+#           Lower xac_pulse_s or repeat_max_hz if your XAC consumer
+#           needs a visible gap.
+#
+# mouse   : USB HID mouse driven by the BNO08x IMU. Drives:
+#             - Cursor x/y from the rate-based pointing stream
+#             - Short puff = LEFT mouse click
+#             - Short sip  = RIGHT mouse click
+#             - Held puff  = scroll wheel UP
+#             - Held sip   = scroll wheel DOWN
+#             - Double puff = MIDDLE click (reserved)
+#           Requires CircuitPython's default HID composite (mouse +
+#           keyboard + consumer-control) — no boot.py changes needed.
+#
+# Event semantics in BOTH modes:
+#   short = breath ends within hold_to_repeat_s (default 0.4s)
+#   held  = breath sustained past hold_to_repeat_s (emits *_repeat)
+#   double = two breaths within double_*_window_s
+output_mode = encoder
 
-# --- Timings --------------------------------------------------------
-# Two puffs whose release-to-press gap is below double_puff_window_s
-# combine into a "double_puff" — fires encoder button + double-pulse
-# on the XAC puff jack.
-double_puff_window_s = 0.45
-# Symmetric for sip — fires double-pulse on the XAC sip jack.
-double_sip_window_s = 0.45
-# Continuous puff/sip longer than hold_to_repeat_s starts emitting
-# repeat ticks at a pressure-scaled rate.
-hold_to_repeat_s = 0.40
-repeat_min_hz = 3.0
-repeat_max_hz = 20.0
-repeat_full_scale_kpa = 3.0
+# Mouse-mode tunables.
+# Per-tick motion below this is dropped (no HID report sent). Lets
+# the gyro deadband sit a hair above zero without flooding the host.
+mouse_motion_min_per_tick = 1
+# Scroll-wheel amount per puff_repeat / sip_repeat tick.
+mouse_scroll_per_repeat = 1
 
-# --- Output pulse widths -------------------------------------------
-encoder_phase_s = 0.002
+# Heartbeat: how often the live status line is printed to USB-CDC.
+# Dropped to 2.0 s while bringing up the LPS28 plumbing so the
+# peak(puf, sip) field updates quickly while testing breath strength.
+# Raise back to 5-10 s for production once thresholds are dialed in.
+heartbeat_period_s = 2.0
+
+# =====================================================================
+# DISPLAY
+# =====================================================================
+# Pick the panel you have, or "none". Whitespace, case and underscores
+# are all interchangeable, so all three of these mean the same thing:
+#
+#     display = SSD1306 OLED 128x64
+#     display = ssd1306_oled_128x64
+#     display = ssd1306-oled-128x64
+#
+# Supported values:
+#
+#   none                                   ← no display attached
+#
+#   ssd1306 oled 128x64                    ← I2C OLED on J1 (most common)
+#   ssd1306 oled 128x32                    ← skinnier 128x32 I2C OLED
+#
+#   st7735r color lcd 128x160 greentab     ← 1.8" SPI TFT, GreenTab
+#   st7735r color lcd 128x160 redtab       ← 1.8" SPI TFT, RedTab
+#   st7735r color lcd 128x160 blacktab     ← 1.8" SPI TFT, BlackTab
+#   st7735r color lcd 128x128              ← 1.44" square
+#   st7735r color lcd 80x160               ← 0.96" wide
+#
+#   st7789 color lcd 240x240               ← 1.3"/1.5" IPS square
+#   st7789 color lcd 240x320               ← 2.0"/2.4" IPS portrait
+#   st7789 color lcd 135x240               ← 1.14" Pico-Display style
+#
+#   ili9341 color lcd 240x320              ← 2.2"-3.2" 240x320 panels
+#   gc9a01 color lcd 240x240 round         ← 1.28" round
+display = none
+
+# Throttle redraws regardless of which panel is selected.
+display_update_hz = 10
+
+# =====================================================================
+# I2C DEVICES (J1 connector — GP4 SDA / GP5 SCL)
+# =====================================================================
+# Set each slot to "none" to disable, or to a device kind. Optional
+# "@0xNN" suffix locks an I2C address; without it the driver
+# auto-detects across the chip's strap options.
+#
+# Supported kinds:
+#   lps28               ← absolute pressure sensor (0x5C / 0x5D)
+#   bno085              ← Hillcrest/CEVA 9-DOF IMU, SHTP protocol (0x4A / 0x4B)
+#   bno086              ← same family, same driver
+#   bno080              ← same family, same driver
+#   bno055              ← Bosch 9-DOF IMU, register protocol (0x28 / 0x29)
+#
+# Example (single IMU plus pressure sensor):
+#   i2c_pressure = lps28
+#   i2c_imu_1    = bno085
+#   i2c_imu_2    = none
+#
+# Multiple BNO08x sensors share addresses, so without an external
+# I2C mux only two can coexist on the same bus (one strapped to 0x4A,
+# the other to 0x4B). Slots 3/4 are wired up for a future TCA9548A
+# build but are currently 'none' on this prototype.
+i2c_pressure = lps28
+i2c_imu_1    = bno085
+i2c_imu_2    = none
+i2c_imu_3    = none
+i2c_imu_4    = none
+
+# =====================================================================
+# POINTING (IMU-as-mouse)
+# =====================================================================
+# Pipeline (per loop tick, in order):
+#   raw gyro rate (rad/s)
+#     -> picked off the configured yaw/pitch axes with sign
+#     -> converted to deg/s
+#     -> low-pass filtered (alpha)
+#     -> deadband (anything below dps threshold => 0)
+#     -> acceleration curve (sign * |dps|^expo * gain * dt)
+#     -> fractional accumulator (sub-pixel motion is preserved
+#        across ticks instead of being truncated to 0)
+#     -> clamp to ±max_per_tick
+#     -> integer dx/dy emitted on the heartbeat line
+#
+# A separate path computes absolute yaw/pitch from the quaternion,
+# zeroed at boot (or after a recenter / sustained stillness).
+
+# Linear gain applied to the post-curve dps. Bigger = snappier cursor.
+imu_pointing_gain = 400.0
+# Rates below this (deg/s, post-filter) read as zero. Filters out the
+# stationary gyro noise floor (~0.5-1.0 dps on a stock BNO08x/BNO055).
+imu_pointing_deadband_dps = 1.5
+# IIR low-pass alpha on the rate stream. 1.0 = no filter (raw rate),
+# smaller = more smoothing. 0.4 ≈ 30 Hz cutoff at a 25 ms tick — gives
+# noticeably calmer cursor without introducing visible lag.
+imu_pointing_alpha = 0.4
+# Acceleration-curve exponent. 1.0 = linear (default). Set 1.3-1.5 for
+# precision-at-low-rate-and-fast-at-high-rate (typical mouse curve).
+# Set <1.0 (e.g. 0.7) for the inverse: snappy slow motion, capped fast.
+imu_pointing_accel_expo = 1.0
+# Per-tick clamp on the integer dx/dy delta. 60 keeps a hand-twitch
+# from sending the cursor across the screen in one tick; raise toward
+# 127 (HID int8 max) if you want headroom.
+imu_pointing_max_per_tick = 60.0
+# Auto-recenter the absolute pose after the rate has been below
+# the deadband for N seconds. 0 = disabled. Try 5.0 if the absolute
+# yaw drifts during long stretches of stillness.
+imu_pointing_stillness_recenter_s = 0.0
+
+# Map gyro axes onto yaw / pitch. Each value is one of:
+#   x, y, z, +x, +y, +z, -x, -y, -z
+# The leading sign flips the axis for that role. Defaults match an
+# Adafruit BNO085 mounted with chip-Z up; rotate / mirror these for
+# other mountings without rewriting code.
+imu_yaw_axis   = -z
+imu_pitch_axis = -x
+
+# =====================================================================
+# BREATH THRESHOLDS (kPa above baseline)
+# =====================================================================
+# Symmetric ±1.0 kPa thresholds — set after switching the classifier
+# input to LPS28 (which is bidirectional and gives clean readings in
+# both directions). User-confirmed peaks comfortably exceed 1.0 in
+# both puff and sip with the current plumbing.
+puff_on_kpa  =  1.00
+puff_off_kpa =  0.70
+sip_on_kpa   = -1.00
+sip_off_kpa  = -0.70
+# Note: puff_off / sip_off are only used when adaptive_release_enabled
+# is false. The adaptive scheme (below) computes a per-breath release
+# threshold that scales with how deep the breath went.
+
+# --- Adaptive release ----------------------------------------------
+# Instead of releasing at a fixed sip_off / puff_off threshold, scale
+# the release point with how strongly the user actually breathed.
+# Each PUFF_ON / SIP_ON tracks the signed peak, and the release
+# threshold sits somewhere between the on-threshold and the peak:
+#
+#   release = peak +/- max(min_gap, fraction * (on_threshold - peak))
+#
+# Worked example for sip:
+#   sip_on = -0.10, peak hit -0.25, fraction = 0.5, min_gap = 0.05
+#     gap = max(0.05, 0.5 * (-0.10 - -0.25)) = max(0.05, 0.075) = 0.075
+#     release = -0.25 + 0.075 = -0.175
+#
+# A deeper sip releases at a more-negative threshold (so the firmware
+# sees the release sooner during the ramp-back); a barely-past
+# threshold sip still gets the configured min_gap of headroom so it
+# doesn't chatter at the noise floor.
+# Disabled after switching to LPS28 + ±1.0 kPa thresholds. The
+# adaptive scheme was designed for the MPX-era setup where ranges
+# were tight; with cleaner LPS28 data and a 0.3 kPa hysteresis gap,
+# static release works for both taps and scrolls. The peak-tracking
+# logic would otherwise fire a false release whenever a sustained
+# breath settles below its overshoot peak, breaking scroll.
+adaptive_release_enabled       = false
+adaptive_release_fraction      = 0.5
+# Floor on how far pressure has to back off from peak before release
+# fires. MUST exceed the natural breath-to-breath noise on a
+# sustained puff/sip — otherwise the noise itself crosses the
+# release threshold, the firmware thinks the breath ended, then
+# the still-active breath immediately re-triggers it, and the
+# user sees "scrolling that won't stop".
+# Idle noise reads ~0.01 kPa p2p; during a sustained breath it
+# climbs to ~0.05-0.10. 0.15 keeps us comfortably above that.
+adaptive_release_min_gap_kpa   = 0.15
+
+# --- Pressure fusion -----------------------------------------------
+# The MPX5010DP is a unidirectional sensor (0-10 kPa rated). It can
+# measure puff up to 10 kPa cleanly but its output saturates near
+# the offset voltage on the sip side, so |sip| caps around 0.3 kPa
+# in the classifier no matter how hard the user pulls.
+#
+# --- LPS28 baseline auto-rezero ------------------------------------
+# After N seconds of state=idle with a stable LPS gauge (spread
+# below ~0.1 kPa), if the running mean has drifted more than
+# ``lps_auto_rezero_threshold_kpa`` from zero, the firmware snaps
+# the baseline so the next gauge_kpa() reads ~0. Catches slow
+# room-pressure / thermal / leak drift between boot and now.
+# Set idle_s = 0 to disable.
+lps_auto_rezero_idle_s         = 30.0
+lps_auto_rezero_threshold_kpa  = 0.5
+
+# Each direction independently picks its source. With both flags
+# true, LPS28 drives the classifier on both sides — use this once
+# the LPS28 is pneumatically plumbed and you'd rather have its
+# bidirectional range than the MPX's higher-SNR puff signal.
+#
+# Common combinations:
+#   sip_from_lps28 = false  puff_from_lps28 = false  → MPX-only (classic)
+#   sip_from_lps28 = true   puff_from_lps28 = false  → MPX puff + LPS28 sip (fusion)
+#   sip_from_lps28 = true   puff_from_lps28 = true   → LPS28 drives both
+sip_from_lps28  = true
+puff_from_lps28 = true
+
+# --- Per-direction effort scaling ----------------------------------
+# The classifier sees: max(puff_branch, 0)*puff_signal_scale
+#                    + min(sip_branch,  0)*sip_signal_scale.
+# Use these to balance asymmetric breath effort: a user who can
+# easily sip but struggles to puff sets puff_signal_scale > 1 so a
+# weaker puff reaches the same configured threshold.
+#
+# Defaults: puff = 2.0, sip = 1.0 — empirically balanced for this
+# device's plumbing where puff takes about twice the lung pressure
+# of an equivalent-feel sip.
+#
+# Future work: per-user calibration that auto-derives the ratio
+# from a "max puff / max sip" gesture. See memory:
+# project_signal_scale_calibration.md (planned).
+puff_signal_scale = 2.0
+sip_signal_scale  = 1.0
+
+# =====================================================================
+# TIMINGS
+# =====================================================================
+double_puff_window_s   = 0.45
+double_sip_window_s    = 0.45
+# Default hold-to-repeat threshold for both directions. A breath
+# released sooner than this is a "short tap" (fires the encoder
+# pushbutton or button 2); a breath held longer is a "scroll" and
+# emits puff_repeat / sip_repeat ticks instead.
+hold_to_repeat_s       = 0.40
+# Per-direction overrides for hold_to_repeat_s. The "tap window" —
+# breaths released within this many seconds fire the encoder button
+# (puff) or button 2 (sip); longer breaths start scrolling and the
+# release-event is intentionally suppressed so a long scroll
+# doesn't end with a spurious select.
+# 0.80 s gives plenty of room for a deliberate tap of either
+# direction. Drop these toward 0.4 s only if you want scrolling
+# to start sooner. Both knobs are independent.
+# Symmetric 0.5 s tap window for both directions. LPS28 driving the
+# classifier gives clean, fast-responding readings in both puff and
+# sip, so the asymmetric MPX-era values aren't needed anymore.
+# Drop further (e.g. 0.3) to make scrolling start even sooner;
+# raise toward 0.8 if you find yourself accidentally scrolling
+# during deliberate taps.
+puff_hold_to_repeat_s  = 0.50
+sip_hold_to_repeat_s   = 0.50
+# Repeat-rate mapping: rate_hz = magnitude_kpa * repeat_rate_factor,
+# clamped to [repeat_min_hz, repeat_max_hz]. magnitude is clamped to
+# repeat_full_scale_kpa above. With the defaults below this is a 1:1
+# kPa→Hz mapping: a 1 kPa held breath ticks once a second, a 10 kPa
+# held breath ticks ten times a second, anything above 10 kPa is
+# clamped to 10 Hz.
+# Bump repeat_rate_factor above 1.0 to make scrolling faster per kPa
+# of effort. A logarithmic curve is on the roadmap (see
+# repeat_rate_curve note); for now "linear" is the only supported
+# value.
+repeat_min_hz          = 1.0
+repeat_max_hz          = 10.0
+repeat_full_scale_kpa  = 10.0
+repeat_rate_factor     = 1.0
+repeat_rate_curve      = linear
+
+# Per-direction repeat multipliers: emit N CW/CCW clicks (or scroll
+# ticks in mouse mode) for every puff_repeat / sip_repeat event.
+# Useful when one direction of the breath is physically harder than
+# the other — sip is often harder to sustain than puff, so doubling
+# the sip count lets a half-strength sip cover the same scroll
+# distance as a full-strength puff in the same time.
+puff_repeat_multiplier = 1
+sip_repeat_multiplier  = 1
+
+# =====================================================================
+# OUTPUT PULSE WIDTHS
+# =====================================================================
+encoder_phase_s        = 0.002
 encoder_button_press_s = 0.05
-xac_pulse_s = 0.05
-# Gap between the two halves of a double-pulse on the XAC line.
-xac_double_gap_s = 0.05
+xac_pulse_s            = 0.05
+xac_double_gap_s       = 0.05
 
-# --- Startup --------------------------------------------------------
+# Drive mode for the encoder A / B / BTN / BTN2 output lines.
+#   push_pull  (default) — actively drives 3.3 V high and 0 V low.
+#                          Works against any host, no external
+#                          pull-ups required.
+#   open_drain           — only sinks to 0 V; the high state is
+#                          high-Z and the host must provide its own
+#                          pull-up. Safer interop with a 5 V host.
+encoder_drive_mode = push_pull
+
+# =====================================================================
+# STARTUP
+# =====================================================================
 # Seconds spent learning the no-breath baseline. User must NOT
 # touch the mouthpiece during this window.
 baseline_calibrate_s = 1.5
 
-# --- Loop tuning ----------------------------------------------------
-poll_period_s = 0.005
+# =====================================================================
+# LOOP TUNING
+# =====================================================================
+poll_period_s       = 0.005
 pressure_oversample = 16
-
-# --- Display --------------------------------------------------------
-# SPI bus + control pins are fixed on the PCB:
-#   SCK=GP10 MOSI=GP11 MISO=GP12  CS=GP13 DC=GP14 RST=GP15 LED=GP16
-#
-# Pick a preset that matches the panel you plugged in. To disable
-# the LCD entirely (or drive it from a one-off custom config) set
-# display_enabled = false or display_preset = none.
-#
-# Available presets (set display_preset = ...):
-#
-#   none                          ← no preset; use individual fields
-#
-#   ST7735R (most "1.8 inch SPI TFT" Aliexpress / Amazon listings):
-#   st7735r_128x160_greentab      ← TRY THIS FIRST for a 1.8" panel
-#   st7735r_128x160_redtab
-#   st7735r_128x160_blacktab
-#   st7735r_128x128               ← 1.44" square
-#   st7735r_80x160                ← 0.96" wide
-#
-#   ST7789 (many "1.8/2.0/2.4 inch IPS" Aliexpress modules from 2024+):
-#   st7789_240x240                ← 1.3" / 1.5" IPS square
-#   st7789_240x320                ← 2.0" / 2.4" IPS portrait
-#   st7789_135x240                ← 1.14" Pico-Display style
-#
-#   ILI9341 (2.2" / 2.4" / 2.8" / 3.2" 240x320 panels):
-#   ili9341_240x320
-#
-#   GC9A01 (1.28" round):
-#   gc9a01_240x240_round
-#
-#   SSD1306 (I2C OLED — uses J1 connector, GP4/GP5):
-#   ssd1306_128x64_i2c            ← 1" / 0.96" / 1.3" most common OLED
-#   ssd1306_128x32_i2c            ← skinnier 128x32 variant
-#
-# If the boot R/G/B/W self-test stays solid white, the panel isn't
-# accepting our pixel data — try another preset, OR check that
-# DC/CS/RST are wired to GP14/GP13/GP15 respectively.
-# Color LCD on SPI1 (GP10–16). LPS28 stays on I2C so the two
-# coexist — see the override block at the bottom for SDA/SCL pins.
-display_enabled = true
-# --- Active variant: SSD1306 OLED on shared I2C0 -------------------
-# This board has the 128x64 SSD1306 OLED on J1 (GP4 SDA / GP5 SCL),
-# and the LPS28 absolute-pressure sensor on the same bus at 0x5C.
-# The two coexist at distinct addresses; sip_puff_device creates a
-# single busio.I2C and shares it with both.
-#
-# To switch back to the LCD variant, set:
-#     display_preset = st7735r_128x160_greentab
-#     display_controller = st7735r
-#     display_width = 160
-#     display_height = 128
-#     display_rotation = 90
-display_preset = ssd1306_128x64_i2c
-display_update_hz = 10
-# R/G/B/W flash is meaningless on a mono OLED — leave it off.
-display_test_pattern = false
-# SPI baudrate is unused for the SSD1306, kept here for the LCD
-# variant.
-display_baudrate = 4000000
-
-# --- I2C pins (J1 connector) ---------------------------------------
-# Used by both the SSD1306 OLED (0x3C) and the LPS28 (0x5C). The
-# firmware scans the bus on boot — the serial console prints whatever
-# I2C addresses respond on whichever pair you pick.
-display_i2c_sda_pin = GP4
-display_i2c_scl_pin = GP5
-# display_i2c_address defaults to 0x3C — uncomment + set to 61 (decimal)
-# only if your OLED is strapped to the alternate 0x3D address.
-display_i2c_frequency = 100000
