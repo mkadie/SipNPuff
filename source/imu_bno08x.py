@@ -83,6 +83,27 @@ def _wrap_pi(angle):
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+def _clamp(v, lo, hi):
+    """Clamp v to [lo, hi]."""
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+
+def _deadband_signed(v, db):
+    """Subtract a symmetric deadband, preserving sign and keeping the
+    response continuous at the deadband edge (no jump from 0 to db).
+    Returns 0.0 inside [-db, db].
+    """
+    if v > db:
+        return v - db
+    if v < -db:
+        return v + db
+    return 0.0
+
+
 def _resolve_axis(spec):
     """Parse 'z', '-z', '+x' etc. into (axis_index, sign).
     Bare 'x'/'y'/'z' defaults to positive sign.
@@ -103,51 +124,67 @@ def _resolve_axis(spec):
 class Pointing:
     """Quaternion + gyro → cursor-deltas helper.
 
-    Two outputs in parallel:
-      * rate_dx, rate_dy        — integrated gyro yaw/pitch *rate*,
-                                  optionally low-pass filtered, run
-                                  through an acceleration curve,
-                                  fractionally accumulated, and
-                                  clamped to HID range. Suits a
-                                  head-mouse.
-      * abs_yaw_deg, abs_pitch_deg — quaternion-derived absolute
-                                  angles relative to a zero pose.
-                                  Suits a "re-center to look straight
-                                  ahead" scheme. The zero pose is
-                                  set on first call and refreshed
-                                  whenever ``recenter()`` is called
-                                  (or automatically after the IMU
-                                  has been still for
-                                  ``stillness_recenter_s`` seconds,
-                                  if that's enabled).
+    The cursor deltas (rate_dx, rate_dy) are produced by one of two
+    selectable movement types (``mode``):
+
+      * ``"fusion"`` (default) — tilt-as-joystick. The fused
+        quaternion gives the unit's absolute tilt relative to a zero
+        ("level") pose; cursor *velocity* scales with how far it's
+        tilted. Forward/back tilt (pitch) drives up/down, tipping
+        side to side (roll) drives left/right. Tilt-and-hold keeps
+        the cursor gliding; returning to level stops it. This is the
+        recommended scheme for a hand-held BNO08x because both axes
+        are gravity-referenced (no yaw drift).
+
+      * ``"rate"`` — gyro air-mouse. Cursor velocity tracks the
+        instantaneous yaw/pitch *angular rate*; the cursor only
+        moves while the unit is rotating. Suits a head-mouse.
+
+    Either way the drive value is run through an acceleration curve,
+    fractionally accumulated (sub-pixel motion preserved across
+    ticks), and clamped to HID range.
+
+    A third output, ``abs_yaw_deg`` / ``abs_pitch_deg`` (quaternion
+    angles relative to the zero pose), is always returned for the
+    diagnostic heartbeat. The zero pose is set on the first call and
+    refreshed by ``recenter()`` (or automatically after the cursor
+    has been stationary for ``stillness_recenter_s`` seconds).
 
     Args:
-        gain: linear scale on rate-based deltas.
-        deadband_dps: rates below this (deg/s) read as zero — kills
-            stationary gyro jitter.
+        gain: linear scale on rate-mode deltas.
+        deadband_dps: rate-mode rates below this (deg/s) read as zero.
         alpha: IIR low-pass on rate dps (0 < alpha ≤ 1). 1.0 = no
             filter. Default 0.4 ≈ 30 Hz cutoff at a 25 ms tick.
-        accel_expo: power-curve exponent applied to |rate_dps|. 1.0
-            (default) = linear. >1.0 boosts large motions for fast
-            traverse; <1.0 boosts small motions for fine control.
-        max_per_tick: clamp output |dx|, |dy| to this. Defaults to
-            60 — well under the int8 range of HID mouse, even at
-            sustained slow-tick rates.
-        yaw_axis / pitch_axis: which gyro axis maps to yaw / pitch.
-            Strings 'x'/'y'/'z' with optional sign, e.g. '-z'. The
-            default axis assignment matches an Adafruit-mounted
-            BNO085 with the chip's +Z up; rotate / mirror for other
-            mountings without rewriting code.
-        stillness_recenter_s: re-zero the absolute pose when the
-            filtered rate magnitude has been below deadband for at
-            least this many seconds. 0 (default) disables.
+        accel_expo: power-curve exponent applied to the drive value
+            in BOTH modes. 1.0 (default) = linear. >1.0 boosts large
+            motions for fast traverse; <1.0 boosts small motions for
+            fine control.
+        max_per_tick: clamp output |dx|, |dy| to this (both modes).
+        yaw_axis / pitch_axis: rate-mode gyro axis → yaw / pitch.
+            Strings 'x'/'y'/'z' with optional sign, e.g. '-z'.
+        stillness_recenter_s: re-zero the pose when the cursor has
+            been stationary at least this many seconds. 0 disables.
+        mode: "fusion" (default) or "rate" — see above.
+        tilt_deadband_deg: fusion-mode tilt below this (deg from the
+            level pose) reads as zero — keeps the cursor still when
+            the unit is roughly level.
+        tilt_gain: fusion-mode speed scale (cursor units per second
+            per degree of tilt past the deadband).
+        tilt_max_deg: fusion-mode tilt is clamped to this magnitude
+            before scaling, so a big flip doesn't fling the cursor.
+        invert_x / invert_y: flip fusion-mode left/right or up/down
+            to match how the unit is held.
     """
 
     def __init__(self, gain=400.0, deadband_dps=1.5,
                  alpha=0.4, accel_expo=1.0,
                  max_per_tick=60.0,
                  yaw_axis="-z", pitch_axis="-x",
-                 stillness_recenter_s=0.0):
+                 stillness_recenter_s=0.0,
+                 mode="fusion",
+                 tilt_deadband_deg=4.0, tilt_gain=25.0,
+                 tilt_max_deg=35.0,
+                 invert_x=False, invert_y=False):
         self._gain = float(gain)
         self._deadband_dps = float(deadband_dps)
         self._alpha = max(0.001, min(1.0, float(alpha)))
@@ -157,19 +194,36 @@ class Pointing:
         self._pitch_idx, self._pitch_sign = _resolve_axis(pitch_axis)
         self._stillness_s = float(stillness_recenter_s)
 
+        self._mode = str(mode).strip().lower()
+        if self._mode not in ("fusion", "rate"):
+            print("Pointing: unknown mode '{}', using 'fusion'".format(
+                self._mode))
+            self._mode = "fusion"
+        self._tilt_deadband_deg = float(tilt_deadband_deg)
+        self._tilt_gain = float(tilt_gain)
+        self._tilt_max_deg = float(tilt_max_deg)
+        self._invert_x = bool(invert_x)
+        self._invert_y = bool(invert_y)
+
         self._last_t = None
         self._zero_yaw = None
         self._zero_pitch = None
+        self._zero_roll = None
         self._fyaw_dps = 0.0
         self._fpitch_dps = 0.0
         self._dx_carry = 0.0
         self._dy_carry = 0.0
         self._still_since = None
 
-    def recenter(self, yaw, pitch):
+    @property
+    def mode(self):
+        return self._mode
+
+    def recenter(self, yaw, pitch, roll):
         """Mark current absolute orientation as the new zero pose."""
         self._zero_yaw = yaw
         self._zero_pitch = pitch
+        self._zero_roll = roll
 
     @staticmethod
     def _curve(dps, expo, gain, dt):
@@ -195,18 +249,10 @@ class Pointing:
         whole = int(total)
         return whole, (total - whole)
 
-    def update(self, gyro, quat, now=None):
-        """Feed one sample, returns
-        (rate_dx, rate_dy, abs_yaw_deg, abs_pitch_deg).
-
-        gyro: (gx, gy, gz) rad/s, sensor-frame.
-        quat: (i, j, k, real) unit quaternion, sensor-frame.
+    def _rate_drive(self, gyro, dt):
+        """Gyro air-mouse: cursor velocity from yaw/pitch angular rate.
+        Returns (rdx_raw, rdy_raw) pre-carry, pre-clamp.
         """
-        if now is None:
-            now = time.monotonic()
-        dt = 0.0 if self._last_t is None else (now - self._last_t)
-        self._last_t = now
-
         yaw_dps_raw   = math.degrees(gyro[self._yaw_idx])   * self._yaw_sign
         pitch_dps_raw = math.degrees(gyro[self._pitch_idx]) * self._pitch_sign
 
@@ -222,36 +268,78 @@ class Pointing:
         yaw_dps   = self._fyaw_dps   if abs(self._fyaw_dps)   >= self._deadband_dps else 0.0
         pitch_dps = self._fpitch_dps if abs(self._fpitch_dps) >= self._deadband_dps else 0.0
 
-        rdx_raw = self._curve(yaw_dps,   self._accel_expo, self._gain, dt)
-        rdy_raw = self._curve(pitch_dps, self._accel_expo, self._gain, dt)
+        return (self._curve(yaw_dps,   self._accel_expo, self._gain, dt),
+                self._curve(pitch_dps, self._accel_expo, self._gain, dt))
+
+    def _tilt_drive(self, abs_pitch_rad, abs_roll_rad, dt):
+        """Tilt-as-joystick: cursor velocity from how far the unit is
+        tilted off level. Forward/back tilt (pitch) → y, tipping side
+        to side (roll) → x. Returns (rdx_raw, rdy_raw).
+        """
+        # Clamp magnitude first so a big flip saturates rather than
+        # flings, then remove the near-level deadband.
+        ex = _clamp(math.degrees(abs_roll_rad),
+                    -self._tilt_max_deg, self._tilt_max_deg)
+        ey = _clamp(math.degrees(abs_pitch_rad),
+                    -self._tilt_max_deg, self._tilt_max_deg)
+        ex = _deadband_signed(ex, self._tilt_deadband_deg)
+        ey = _deadband_signed(ey, self._tilt_deadband_deg)
+
+        rdx = self._curve(ex, self._accel_expo, self._tilt_gain, dt)
+        rdy = self._curve(ey, self._accel_expo, self._tilt_gain, dt)
+        if self._invert_x:
+            rdx = -rdx
+        if self._invert_y:
+            rdy = -rdy
+        return rdx, rdy
+
+    def update(self, gyro, quat, now=None):
+        """Feed one sample, returns
+        (cursor_dx, cursor_dy, abs_yaw_deg, abs_pitch_deg).
+
+        cursor_dx/dy come from whichever ``mode`` is active.
+
+        gyro: (gx, gy, gz) rad/s, sensor-frame.
+        quat: (i, j, k, real) unit quaternion, sensor-frame.
+        """
+        if now is None:
+            now = time.monotonic()
+        dt = 0.0 if self._last_t is None else (now - self._last_t)
+        self._last_t = now
+
+        # Absolute orientation from the fused quaternion. The zero pose
+        # is captured on the first sample.
+        yaw, pitch, roll = _quat_to_euler(*quat)
+        if self._zero_yaw is None:
+            self.recenter(yaw, pitch, roll)
+        abs_yaw   = _wrap_pi(yaw  - self._zero_yaw)
+        abs_pitch = pitch - self._zero_pitch
+        abs_roll  = _wrap_pi(roll - self._zero_roll)
+
+        if self._mode == "rate":
+            rdx_raw, rdy_raw = self._rate_drive(gyro, dt)
+        else:
+            rdx_raw, rdy_raw = self._tilt_drive(abs_pitch, abs_roll, dt)
 
         rdx_int, self._dx_carry = self._split_int_carry(rdx_raw, self._dx_carry)
         rdy_int, self._dy_carry = self._split_int_carry(rdy_raw, self._dy_carry)
 
         cap = self._max_per_tick
-        if rdx_int >  cap: rdx_int =  cap
-        if rdx_int < -cap: rdx_int = -cap
-        if rdy_int >  cap: rdy_int =  cap
-        if rdy_int < -cap: rdy_int = -cap
+        rdx_int = _clamp(rdx_int, -cap, cap)
+        rdy_int = _clamp(rdy_int, -cap, cap)
 
-        # Absolute orientation from quaternion.
-        yaw, pitch, _roll = _quat_to_euler(*quat)
-        if self._zero_yaw is None:
-            self.recenter(yaw, pitch)
-
-        # Optional auto-recenter after sustained stillness.
+        # Auto-recenter once the cursor has been stationary a while —
+        # works for both modes since it keys off the emitted delta
+        # (rate: not rotating; fusion: held near level).
         if self._stillness_s > 0.0:
-            if yaw_dps == 0.0 and pitch_dps == 0.0:
+            if rdx_int == 0 and rdy_int == 0:
                 if self._still_since is None:
                     self._still_since = now
                 elif (now - self._still_since) >= self._stillness_s:
-                    self.recenter(yaw, pitch)
+                    self.recenter(yaw, pitch, roll)
                     self._still_since = now  # arm next interval
             else:
                 self._still_since = None
-
-        abs_yaw = _wrap_pi(yaw - self._zero_yaw)
-        abs_pitch = pitch - self._zero_pitch
 
         return rdx_int, rdy_int, math.degrees(abs_yaw), math.degrees(abs_pitch)
 

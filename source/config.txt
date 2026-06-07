@@ -150,6 +150,39 @@ i2c_imu_4    = none
 # =====================================================================
 # POINTING (IMU-as-mouse)
 # =====================================================================
+# Movement type — how IMU motion maps to cursor motion:
+#
+#   fusion  (default for this sensor) — TILT-AS-JOYSTICK. The fused
+#           quaternion gives the unit's absolute tilt off "level";
+#           cursor SPEED scales with how far it's tilted. Tilt
+#           forward/back (pitch) = move up/down, tip side to side
+#           (roll) = move left/right. Tilt-and-hold keeps gliding;
+#           return to level to stop. Both axes are gravity-referenced
+#           so there's no yaw drift. The "level" pose is captured at
+#           boot (and re-captured by stillness-recenter, below).
+#
+#   rate    — GYRO AIR-MOUSE. Cursor velocity tracks the yaw/pitch
+#           angular RATE; the cursor moves only while you're rotating
+#           the unit. Uses the imu_yaw_axis / imu_pitch_axis +
+#           imu_pointing_gain knobs.
+imu_pointing_mode = fusion
+
+# --- Fusion (tilt-as-joystick) tunables ---
+# Tilt within this many degrees of level reads as zero — keeps the
+# cursor still when the unit is roughly level. Raise if it creeps.
+imu_tilt_deadband_deg = 4.0
+# Speed scale: cursor units per second per degree of tilt past the
+# deadband. Bigger = faster cursor for the same tilt. Tune to taste.
+imu_tilt_gain = 25.0
+# Tilt beyond this magnitude (deg) stops adding speed — a full flip
+# saturates instead of flinging the cursor across the screen.
+imu_tilt_max_deg = 35.0
+# Flip an axis if the cursor goes the wrong way for how you hold the
+# unit. invert_x = left/right, invert_y = up/down.
+imu_tilt_invert_x = false
+imu_tilt_invert_y = false
+
+# --- Rate (gyro air-mouse) pipeline ---
 # Pipeline (per loop tick, in order):
 #   raw gyro rate (rad/s)
 #     -> picked off the configured yaw/pitch axes with sign
@@ -182,9 +215,10 @@ imu_pointing_accel_expo = 1.0
 # from sending the cursor across the screen in one tick; raise toward
 # 127 (HID int8 max) if you want headroom.
 imu_pointing_max_per_tick = 60.0
-# Auto-recenter the absolute pose after the rate has been below
-# the deadband for N seconds. 0 = disabled. Try 5.0 if the absolute
-# yaw drifts during long stretches of stillness.
+# Auto-recenter the "level" / zero pose after the cursor has been
+# stationary (held within the deadband — near level in fusion mode,
+# not rotating in rate mode) for N seconds. 0 = disabled. Try 5.0 if
+# the cursor slowly creeps when you mean to hold still.
 imu_pointing_stillness_recenter_s = 0.0
 
 # Map gyro axes onto yaw / pitch. Each value is one of:

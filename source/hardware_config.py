@@ -407,6 +407,11 @@ _USER_OVERRIDABLE = (
     "imu_pointing_alpha", "imu_pointing_accel_expo",
     "imu_pointing_max_per_tick", "imu_pointing_stillness_recenter_s",
     "imu_yaw_axis", "imu_pitch_axis",
+    # Pointing movement type: "fusion" (tilt-as-joystick, default) or
+    # "rate" (gyro air-mouse), plus the fusion-mode tilt tunables.
+    "imu_pointing_mode",
+    "imu_tilt_deadband_deg", "imu_tilt_gain", "imu_tilt_max_deg",
+    "imu_tilt_invert_x", "imu_tilt_invert_y",
     # Heartbeat rate of the live serial-stream line.
     "heartbeat_period_s",
     # Output mode: "encoder" (default, drives wired encoder + buttons),

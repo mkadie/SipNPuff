@@ -85,7 +85,17 @@ class SipPuffDevice:
             pitch_axis=str(self._config.get("imu_pitch_axis", "-x")),
             stillness_recenter_s=float(self._config.get(
                 "imu_pointing_stillness_recenter_s", 0.0)),
+            # Movement type: "fusion" (tilt-as-joystick, default) or
+            # "rate" (gyro air-mouse). Fusion adds the tilt tunables.
+            mode=str(self._config.get("imu_pointing_mode", "fusion")),
+            tilt_deadband_deg=float(
+                self._config.get("imu_tilt_deadband_deg", 4.0)),
+            tilt_gain=float(self._config.get("imu_tilt_gain", 25.0)),
+            tilt_max_deg=float(self._config.get("imu_tilt_max_deg", 35.0)),
+            invert_x=bool(self._config.get("imu_tilt_invert_x", False)),
+            invert_y=bool(self._config.get("imu_tilt_invert_y", False)),
         )
+        print("Pointing: mode={}".format(self._pointing.mode))
 
         # Display claims SPI1 + GP10–16 for the LCD variant, or the
         # shared I2C bus for the OLED variant. Disabled entirely

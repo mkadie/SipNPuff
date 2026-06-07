@@ -303,22 +303,45 @@ short-sip register as the same press. Default `false`.
 ## 6. IMU pointing (mouse-mode only)
 
 `imu_bno08x.py` (and parallel `imu_bno055.py`) drive an optional
-9-DoF sensor. In mouse mode the gyro produces relative
-`(dx, dy)` deltas, and the quaternion provides absolute yaw/pitch.
+9-DoF sensor. The `Pointing` helper offers **two movement types**,
+selected by `imu_pointing_mode`:
 
-Tuning lives under the `imu_pointing_*` keys in `config.txt`:
+- **`fusion`** (default) — *tilt-as-joystick*. The fused quaternion
+  gives the unit's absolute tilt off a "level" pose; cursor **speed
+  scales with tilt angle**. Forward/back tilt (pitch) → up/down,
+  tipping side to side (roll) → left/right. Tilt-and-hold keeps the
+  cursor gliding; return to level to stop. Both axes are
+  gravity-referenced, so there's no yaw drift. The level pose is
+  captured at boot and re-captured by stillness-recenter.
+- **`rate`** — gyro air-mouse. Cursor velocity tracks the yaw/pitch
+  angular *rate*; the cursor moves only while you rotate the unit.
 
-- `imu_pointing_gain` — overall scale (default 400)
-- `imu_pointing_alpha` — IIR LP on the rate stream (0.4)
-- `imu_pointing_accel_expo` — power-curve exponent (1.0 = linear)
-- `imu_pointing_max_per_tick` — clamp (60, ≤ HID int8 range)
-- `imu_yaw_axis` / `imu_pitch_axis` — which gyro axis is which,
-  with optional `+`/`-` sign prefix (e.g. `-z`)
-- `imu_pointing_stillness_recenter_s` — auto re-zero after idle
+Tuning keys are split by mode in the config-key reference (§8,
+"Pointing"). Fusion adds `imu_tilt_deadband_deg`, `imu_tilt_gain`,
+`imu_tilt_max_deg`, `imu_tilt_invert_x/y`.
 
-The IMU isn't connected on either current bench device; the lines
-in the heartbeat read `imu1=ABSENT …` and the firmware doesn't
-fire mouse motion.
+### Sensor choice
+
+Supported drivers: **BNO085 / BNO086 / BNO080** (BNO08x family, one
+driver) and **BNO055**. We prefer the **BNO085** (the part on the
+current bench unit, `i2c_imu_1 = bno085`, seen at `0x4B`): its on-
+chip sensor fusion (the SH-2 rotation-vector report) is stable and
+reliable, and the BNO08x family was designed for AR/VR head
+tracking — which maps directly onto what we're doing here (turning
+orientation into a pointer). The BNO055 is kept as a fallback with
+the same `poll()` shape.
+
+### Tested
+
+As of 2026-06-07 both HID output modes are exercised on-bench on
+the RP2040 unit (UID `E4624881D3163931`):
+
+- **USB keyboard** (`output_mode = keyboard`) — breath events tap
+  configurable keys; no IMU required.
+- **USB mouse** (`output_mode = mouse`) — fusion pointing confirmed
+  driving the host cursor with a BNO085 at `0x4B`. **Mouse mode
+  requires an IMU**; with none present the heartbeat reads
+  `imu1=ABSENT …` and no cursor motion is emitted.
 
 ---
 
@@ -384,10 +407,18 @@ added during this work, grouped:
 - `map_both_clicks_to_encoder_button = true | false` (default `false`)
 
 ### Pointing (mouse mode)
-- `imu_pointing_gain`, `imu_pointing_alpha`,
-  `imu_pointing_accel_expo`, `imu_pointing_max_per_tick`,
-  `imu_pointing_stillness_recenter_s`,
-  `imu_yaw_axis`, `imu_pitch_axis`
+- `imu_pointing_mode = fusion | rate` (default `fusion`).
+  **fusion** = tilt-as-joystick off the fused quaternion: cursor
+  speed ∝ tilt angle, pitch→up/down, roll→left/right, self-centering
+  on the boot/recenter pose. **rate** = gyro air-mouse (velocity ∝
+  yaw/pitch angular rate; the pre-existing behavior).
+- Fusion tunables: `imu_tilt_deadband_deg` (4.0),
+  `imu_tilt_gain` (25.0), `imu_tilt_max_deg` (35.0),
+  `imu_tilt_invert_x`, `imu_tilt_invert_y`.
+- Rate tunables: `imu_pointing_gain`, `imu_pointing_alpha`,
+  `imu_pointing_accel_expo`, `imu_yaw_axis`, `imu_pitch_axis`.
+- Shared: `imu_pointing_max_per_tick`,
+  `imu_pointing_stillness_recenter_s`.
 
 ---
 
@@ -396,9 +427,21 @@ added during this work, grouped:
 - **Logarithmic repeat-rate curve** — config stub exists; formula
   sketched in `_tick_period`; not implemented. See
   `project_log_repeat_curve.md` memory.
-- **IMU plumbing** — neither bench unit has a BNO08x wired in
-  right now. Mouse mode is functional in code but un-exercised on
-  the bench since 2026-05-10.
+- **IMU axis calibration / remap routine (feature request)** —
+  today the IMU→cursor axis mapping is hand-tuned via config:
+  `imu_yaw_axis` / `imu_pitch_axis` (rate mode) and
+  `imu_tilt_invert_x/y` (fusion mode). That only covers sign flips
+  and gyro-axis swaps; it does **not** handle an IMU physically
+  mounted at an arbitrary rotation, where the chip's pitch/roll/yaw
+  don't line up with the user's "up/down/left/right" at all. We
+  want a **calibration routine** (ideally an on-display guided
+  screen): capture a reference pose plus a couple of user gestures
+  ("tilt the way you want UP", "…the way you want RIGHT"), derive
+  the axis remap / rotation from that, and persist it to
+  `config.txt`. This generalizes the per-axis invert/swap knobs
+  into one "point it however it's mounted, then calibrate" flow.
+  Pairs with the per-user effort calibration already on the roadmap
+  (`project_signal_scale_calibration.md`).
 - **MPX5010DP retirement** — once the LPS28 plumbing is the
   permanent solution, the MPX could be dropped entirely or
   swapped for a **bidirectional MPXV7007DP** (±7 kPa, pin-compatible).
