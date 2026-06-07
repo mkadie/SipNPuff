@@ -345,8 +345,14 @@ Whitelist lives in `hardware_config._USER_OVERRIDABLE`. New keys
 added during this work, grouped:
 
 ### Mode + I/O
-- `output_mode = encoder | mouse`
+- `output_mode = encoder | mouse | keyboard`
 - `mouse_motion_min_per_tick`, `mouse_scroll_per_repeat`
+- `key_puff`, `key_sip`, `key_puff_repeat`, `key_sip_repeat`,
+  `key_double_puff`, `key_double_sip` — keyboard-mode map.
+  Keycode names (`ENTER`, `UP`, `F5`, …) or `+`-joined chords
+  (`CONTROL+Z`); `none` disables an event. Defaults:
+  puff=ENTER, sip=ESCAPE, repeats=UP/DOWN arrows,
+  double-puff=SPACE, double-sip=none.
 
 ### Sensor source
 - `i2c_pressure = lps28`

@@ -38,6 +38,7 @@ from lps28_sensor import LPS28Sensor
 from imu_bno08x import BNO08xSensor, Pointing
 from imu_bno055 import BNO055Sensor
 from mouse_output import MouseOutput
+from keyboard_output import KeyboardOutput
 
 
 class SipPuffDevice:
@@ -107,15 +108,17 @@ class SipPuffDevice:
         self._xac        = XacOutput(self._config)
 
         # Output mode: drives both the dispatch table for breath
-        # events and whether a HID mouse is brought up at boot.
+        # events and which HID device (if any) is brought up at boot.
         self._output_mode = str(
             self._config.get("output_mode", "encoder")).strip().lower()
-        if self._output_mode not in ("encoder", "mouse"):
+        if self._output_mode not in ("encoder", "mouse", "keyboard"):
             print("Output: unknown output_mode '{}', defaulting to 'encoder'"
                   .format(self._output_mode))
             self._output_mode = "encoder"
         self._mouse = MouseOutput(verbose=self._verbose) \
             if self._output_mode == "mouse" else None
+        self._keyboard = KeyboardOutput(self._config, verbose=self._verbose) \
+            if self._output_mode == "keyboard" else None
         # Pull motion-rate gating threshold from config.
         self._mouse_motion_min = int(
             self._config.get("mouse_motion_min_per_tick", 1))
@@ -267,6 +270,8 @@ class SipPuffDevice:
             self._xac.all_release()
             if self._mouse is not None and self._mouse.available:
                 self._mouse.release_all()
+            if self._keyboard is not None and self._keyboard.available:
+                self._keyboard.release_all()
 
     # --- Run modes -----------------------------------------------
 
@@ -555,12 +560,24 @@ class SipPuffDevice:
             "sip"         → HID right click
             "sip_repeat"  → HID scroll wheel down
             "double_sip"  → (no-op; reserved for future)
+
+        Keyboard mode mapping (defaults; each remappable via the
+        key_* entries in config.txt — see keyboard_output.py):
+            "puff"        → ENTER
+            "puff_repeat" → UP_ARROW (repeats at the breath rate)
+            "double_puff" → SPACE
+            "sip"         → ESCAPE
+            "sip_repeat"  → DOWN_ARROW (repeats at the breath rate)
+            "double_sip"  → (unmapped by default)
         """
         if self._verbose:
             print("Event: {}".format(event))
 
         if self._output_mode == "mouse":
             self._dispatch_mouse(event)
+            return
+        if self._output_mode == "keyboard":
+            self._dispatch_keyboard(event)
             return
         self._dispatch_encoder(event)
 
@@ -628,6 +645,39 @@ class SipPuffDevice:
             self._display.flash("down")
             return
         if event == "double_sip":
+            self._display.flash("sip_click")
+            return
+        print("SipPuff: unknown event '{}'".format(event))
+
+    def _dispatch_keyboard(self, event):
+        if self._keyboard is None or not self._keyboard.available:
+            # Fall through silently — the diagnostic heartbeat still
+            # shows that the events are being classified.
+            return
+        if event == "puff":
+            self._keyboard.tap("puff")
+            self._display.flash("puff_click")
+            return
+        if event == "puff_repeat":
+            for _ in range(self._puff_repeat_mult):
+                self._keyboard.tap("puff_repeat")
+            self._display.flash("up")
+            return
+        if event == "double_puff":
+            self._keyboard.tap("double_puff")
+            self._display.flash("puff_click")
+            return
+        if event == "sip":
+            self._keyboard.tap("sip")
+            self._display.flash("sip_click")
+            return
+        if event == "sip_repeat":
+            for _ in range(self._sip_repeat_mult):
+                self._keyboard.tap("sip_repeat")
+            self._display.flash("down")
+            return
+        if event == "double_sip":
+            self._keyboard.tap("double_sip")
             self._display.flash("sip_click")
             return
         print("SipPuff: unknown event '{}'".format(event))

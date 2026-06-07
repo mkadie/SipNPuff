@@ -41,7 +41,17 @@ verbose = true
 #           Requires CircuitPython's default HID composite (mouse +
 #           keyboard + consumer-control) — no boot.py changes needed.
 #
-# Event semantics in BOTH modes:
+# keyboard: USB HID keyboard. Each breath event taps a key (or a
+#           chord) chosen by the key_* map below. Defaults:
+#             - Short puff  = ENTER
+#             - Short sip   = ESCAPE
+#             - Held puff   = UP arrow, repeating at the breath rate
+#             - Held sip    = DOWN arrow, repeating at the breath rate
+#             - Double puff = SPACE
+#             - Double sip  = (nothing)
+#           Same HID composite requirement as mouse mode.
+#
+# Event semantics in ALL modes:
 #   short = breath ends within hold_to_repeat_s (default 0.4s)
 #   held  = breath sustained past hold_to_repeat_s (emits *_repeat)
 #   double = two breaths within double_*_window_s
@@ -53,6 +63,20 @@ output_mode = encoder
 mouse_motion_min_per_tick = 1
 # Scroll-wheel amount per puff_repeat / sip_repeat tick.
 mouse_scroll_per_repeat = 1
+
+# Keyboard-mode key map (used only when output_mode = keyboard).
+# Each value is a Keycode name from adafruit_hid (case-insensitive):
+#   letters A-Z, digits 0-9, F1-F24, ENTER, ESCAPE, TAB, BACKSPACE,
+#   SPACE, UP, DOWN, LEFT, RIGHT, PAGE_UP, PAGE_DOWN, HOME, END,
+#   DELETE, SHIFT, CONTROL, ALT, GUI, KEYPAD_*, ...
+# Chords join names with "+", e.g. key_double_puff = CONTROL+Z.
+# Set an entry to "none" to make that event send nothing.
+key_puff        = ENTER
+key_sip         = ESCAPE
+key_puff_repeat = UP
+key_sip_repeat  = DOWN
+key_double_puff = SPACE
+key_double_sip  = none
 
 # Heartbeat: how often the live status line is printed to USB-CDC.
 # Dropped to 2.0 s while bringing up the LPS28 plumbing so the

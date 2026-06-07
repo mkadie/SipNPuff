@@ -137,8 +137,9 @@ VARIANTS = {
         "display_bgr":       False,
         "display_invert":    False,
         # Boot-time R/G/B/W flash so a wiring or driver problem is
-        # visible immediately. Set false once you trust the display.
-        "display_test_pattern": True,
+        # visible immediately. Off by default — set display_test_pattern
+        # = true in config.txt to re-enable when bringing up a new panel.
+        "display_test_pattern": False,
         "display_bg_color":    0x000000,
         "display_text_color":  0xFFFFFF,
         "display_puff_color":  0xFF6020,    # warm orange
@@ -221,6 +222,16 @@ I2C_DEVICE_KINDS = {
 _I2C_SLOT_KEYS = (
     "i2c_pressure",
     "i2c_imu_1", "i2c_imu_2", "i2c_imu_3", "i2c_imu_4",
+)
+
+# Keys whose values must reach their consumer as raw strings (skip
+# _coerce): I2C slot specs ('0x4A' must not become int(74)) and
+# keyboard key names ('off' must not become False, '1' must not
+# become int(1) — keyboard_output's resolver wants the text).
+_RAW_VALUE_KEYS = _I2C_SLOT_KEYS + (
+    "key_puff", "key_sip",
+    "key_puff_repeat", "key_sip_repeat",
+    "key_double_puff", "key_double_sip",
 )
 
 
@@ -398,11 +409,16 @@ _USER_OVERRIDABLE = (
     "imu_yaw_axis", "imu_pitch_axis",
     # Heartbeat rate of the live serial-stream line.
     "heartbeat_period_s",
-    # Output mode: "encoder" (default, drives wired encoder + buttons)
-    # or "mouse" (drives USB HID mouse).
+    # Output mode: "encoder" (default, drives wired encoder + buttons),
+    # "mouse" (USB HID mouse), or "keyboard" (USB HID keyboard).
     "output_mode",
     # Mouse-mode tunables.
     "mouse_motion_min_per_tick", "mouse_scroll_per_repeat",
+    # Keyboard-mode key map — one Keycode name (or NAME+NAME chord)
+    # per breath event. See keyboard_output.py for the vocabulary.
+    "key_puff", "key_sip",
+    "key_puff_repeat", "key_sip_repeat",
+    "key_double_puff", "key_double_sip",
     # Repeat-scroll multipliers: emit N CW/CCW clicks per puff_repeat /
     # sip_repeat event. Asymmetric defaults handy when one direction
     # of the breath is physically harder than the other.
@@ -494,10 +510,10 @@ def _load_user_config(path="/config.txt"):
                 key, _, val = line.partition("=")
                 key = key.strip()
                 if key in _USER_OVERRIDABLE:
-                    # I2C slot values are parsed downstream as
-                    # 'kind[@0xNN]' specs — keep them raw so we don't
-                    # accidentally coerce '0x4A' to int(74).
-                    if key in _I2C_SLOT_KEYS:
+                    # Some values are parsed downstream (I2C device
+                    # specs, keyboard key names) — keep those raw so
+                    # _coerce doesn't munge them first.
+                    if key in _RAW_VALUE_KEYS:
                         out[key] = val.strip()
                     else:
                         out[key] = _coerce(val)
