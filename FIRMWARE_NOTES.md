@@ -130,8 +130,8 @@ release threshold against ±0.02 kPa noise.
 |-----------------|------------------------------------------------------------|---------------------------|-----------------|
 | `puff`          | Quick puff, released within `puff_hold_to_repeat_s`        | `enc.press()` (GP20)      | left click      |
 | `sip`           | Quick sip, released within `sip_hold_to_repeat_s`          | `enc.press2()` (GP21)     | right click     |
-| `puff_repeat`   | Held puff past hold-window, fires at pressure-scaled rate  | one CW click per tick     | scroll up tick  |
-| `sip_repeat`    | Held sip, same idea                                        | one CCW click per tick    | scroll down tick|
+| `puff_repeat`   | Held puff past hold-window, fires at pressure-scaled rate  | one CW click per tick     | left click / scroll up tick (`mouse_puff_hold_action`, default click) |
+| `sip_repeat`    | Held sip, same idea                                        | one CCW click per tick    | right click / scroll down tick (`mouse_sip_hold_action`, default scroll) |
 | `double_puff`   | Two puffs within `double_puff_window_s`                    | CW + double XAC pulse     | middle click    |
 | `double_sip`    | Two sips within `double_sip_window_s`                      | double XAC sip pulse only | (no-op)         |
 
@@ -306,19 +306,28 @@ short-sip register as the same press. Default `false`.
 9-DoF sensor. The `Pointing` helper offers **two movement types**,
 selected by `imu_pointing_mode`:
 
-- **`fusion`** (default) — *tilt-as-joystick*. The fused quaternion
-  gives the unit's absolute tilt off a "level" pose; cursor **speed
-  scales with tilt angle**. Forward/back tilt (pitch) → up/down,
-  tipping side to side (roll) → left/right. Tilt-and-hold keeps the
-  cursor gliding; return to level to stop. Both axes are
+- **`fusion`** (default) — *tilt-as-joystick*, hand-held. The fused
+  quaternion gives the unit's absolute tilt off a "level" pose;
+  cursor **speed scales with tilt angle**. Forward/back tilt (pitch)
+  → up/down, tipping side to side (roll) → left/right. Tilt-and-hold
+  keeps the cursor gliding; return to level to stop. Both axes are
   gravity-referenced, so there's no yaw drift. The level pose is
   captured at boot and re-captured by stillness-recenter.
+- **`attached_to_a_hat`** (alias `hat`) — same tilt-as-joystick feel
+  mapped for a head/hat-mounted unit: **nod (pitch) → up/down, turn
+  your head (yaw rotation) → left/right**. The yaw axis is *not*
+  gravity-referenced, so it can drift — raise
+  `imu_pointing_stillness_recenter_s` if the cursor creeps sideways.
 - **`rate`** — gyro air-mouse. Cursor velocity tracks the yaw/pitch
   angular *rate*; the cursor moves only while you rotate the unit.
 
-Tuning keys are split by mode in the config-key reference (§8,
-"Pointing"). Fusion adds `imu_tilt_deadband_deg`, `imu_tilt_gain`,
-`imu_tilt_max_deg`, `imu_tilt_invert_x/y`.
+The two fusion modes share `_tilt_drive`, which reads a configurable
+orientation angle per cursor axis (`_FUSION_AXIS_DEFAULTS`): the mode
+sets the defaults, and `imu_fusion_x_axis` / `imu_fusion_y_axis`
+(one of `yaw`/`pitch`/`roll`, optional `+`/`-`) override either.
+Tuning keys are in the config-key reference (§8, "Pointing"); fusion
+adds `imu_tilt_deadband_deg`, `imu_tilt_gain`, `imu_tilt_max_deg`,
+`imu_tilt_invert_x/y`.
 
 ### Sensor choice
 
@@ -370,6 +379,17 @@ added during this work, grouped:
 ### Mode + I/O
 - `output_mode = encoder | mouse | keyboard`
 - `mouse_motion_min_per_tick`, `mouse_scroll_per_repeat`
+- `mouse_center_on_start` (default `true`),
+  `mouse_screen_width` (1920), `mouse_screen_height` (1080) —
+  home the cursor to screen center once at mouse-mode startup.
+  A HID mouse is relative-only, so `MouseOutput.center` slams to
+  the top-left corner then moves half-screen; host pointer
+  acceleration makes it approximate.
+- `mouse_puff_hold_action` / `mouse_sip_hold_action` = `click |
+  scroll` — what a held puff/sip does in mouse mode once past its
+  `*_hold_to_repeat_s`. `click` auto-fires the matching button
+  (puff=LEFT, sip=RIGHT) at the repeat rate; `scroll` sends the
+  wheel. Defaults: puff=`click`, sip=`scroll`.
 - `key_puff`, `key_sip`, `key_puff_repeat`, `key_sip_repeat`,
   `key_double_puff`, `key_double_sip` — keyboard-mode map.
   Keycode names (`ENTER`, `UP`, `F5`, …) or `+`-joined chords
@@ -407,14 +427,18 @@ added during this work, grouped:
 - `map_both_clicks_to_encoder_button = true | false` (default `false`)
 
 ### Pointing (mouse mode)
-- `imu_pointing_mode = fusion | rate` (default `fusion`).
-  **fusion** = tilt-as-joystick off the fused quaternion: cursor
-  speed ∝ tilt angle, pitch→up/down, roll→left/right, self-centering
-  on the boot/recenter pose. **rate** = gyro air-mouse (velocity ∝
-  yaw/pitch angular rate; the pre-existing behavior).
-- Fusion tunables: `imu_tilt_deadband_deg` (4.0),
+- `imu_pointing_mode = fusion | attached_to_a_hat | rate`
+  (default `fusion`). **fusion** = hand-held tilt-as-joystick
+  (pitch→up/down, roll→left/right). **attached_to_a_hat** (alias
+  `hat`) = head-mounted (pitch nod→up/down, yaw turn→left/right).
+  **rate** = gyro air-mouse (velocity ∝ angular rate).
+- Fusion-family tunables: `imu_tilt_deadband_deg` (4.0),
   `imu_tilt_gain` (25.0), `imu_tilt_max_deg` (35.0),
-  `imu_tilt_invert_x`, `imu_tilt_invert_y`.
+  `imu_tilt_invert_x`, `imu_tilt_invert_y`, the per-axis
+  source overrides `imu_fusion_x_axis` / `imu_fusion_y_axis`
+  (`yaw`/`pitch`/`roll`, optional sign), and `imu_accel_factor`
+  (default 4.0) — acceleration multiplier that ramps from 1x for
+  small movements to this value at full tilt/turn.
 - Rate tunables: `imu_pointing_gain`, `imu_pointing_alpha`,
   `imu_pointing_accel_expo`, `imu_yaw_axis`, `imu_pitch_axis`.
 - Shared: `imu_pointing_max_per_tick`,

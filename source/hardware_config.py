@@ -407,11 +407,16 @@ _USER_OVERRIDABLE = (
     "imu_pointing_alpha", "imu_pointing_accel_expo",
     "imu_pointing_max_per_tick", "imu_pointing_stillness_recenter_s",
     "imu_yaw_axis", "imu_pitch_axis",
-    # Pointing movement type: "fusion" (tilt-as-joystick, default) or
-    # "rate" (gyro air-mouse), plus the fusion-mode tilt tunables.
+    # Pointing movement type: "fusion" (tilt-as-joystick, default),
+    # "attached_to_a_hat" (turn→left/right, nod→up/down), or "rate"
+    # (gyro air-mouse), plus the fusion-mode tilt tunables and optional
+    # per-axis orientation-source overrides.
     "imu_pointing_mode",
     "imu_tilt_deadband_deg", "imu_tilt_gain", "imu_tilt_max_deg",
     "imu_tilt_invert_x", "imu_tilt_invert_y",
+    "imu_fusion_x_axis", "imu_fusion_y_axis",
+    # Fusion acceleration: large moves boosted up to this multiplier.
+    "imu_accel_factor",
     # Heartbeat rate of the live serial-stream line.
     "heartbeat_period_s",
     # Output mode: "encoder" (default, drives wired encoder + buttons),
@@ -419,6 +424,14 @@ _USER_OVERRIDABLE = (
     "output_mode",
     # Mouse-mode tunables.
     "mouse_motion_min_per_tick", "mouse_scroll_per_repeat",
+    # Center the cursor on the screen at mouse-mode startup (on by
+    # default). Screen size is needed because a HID mouse can only
+    # move relatively — it homes to a corner then moves half-screen.
+    "mouse_center_on_start",
+    "mouse_screen_width", "mouse_screen_height",
+    # What a held puff / sip does in mouse mode: "click" (auto-fire the
+    # matching button at the repeat rate) or "scroll" (wheel).
+    "mouse_puff_hold_action", "mouse_sip_hold_action",
     # Keyboard-mode key map — one Keycode name (or NAME+NAME chord)
     # per breath event. See keyboard_output.py for the vocabulary.
     "key_puff", "key_sip",

@@ -99,6 +99,36 @@ class MouseOutput:
             if self._verbose:
                 print("Mouse: scroll failed ({})".format(e))
 
+    def center(self, screen_width, screen_height):
+        """Home the cursor to the middle of a screen_width x
+        screen_height display.
+
+        A USB HID mouse only reports *relative* motion, so there's no
+        "move to (x, y)". Instead we first slam the cursor into the
+        top-left corner with a move far larger than the screen (the OS
+        clamps it at the edge), repeated a few times so pointer
+        acceleration can't leave us short of the corner, then move
+        right/down by half the screen. Host pointer acceleration makes
+        the result approximate, not pixel-exact.
+        """
+        if not self._available:
+            return
+        w = int(screen_width)
+        h = int(screen_height)
+        if w <= 0 or h <= 0:
+            return
+        try:
+            # Pin to top-left. adafruit_hid splits each move into
+            # ±127 reports, so one big call already sends many steps;
+            # overshoot 2x and repeat to defeat acceleration.
+            for _ in range(3):
+                self._mouse.move(x=-w * 2, y=-h * 2)
+            # From the corner, move to the middle.
+            self._mouse.move(x=w // 2, y=h // 2)
+            print("Mouse: centered on {}x{} screen".format(w, h))
+        except Exception as e:
+            print("Mouse: center failed ({})".format(e))
+
     def release_all(self):
         if not self._available:
             return

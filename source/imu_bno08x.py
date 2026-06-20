@@ -121,6 +121,42 @@ def _resolve_axis(spec):
     return idx, sign
 
 
+_EULER_NAMES = ("yaw", "pitch", "roll")
+
+
+def _resolve_euler_axis(spec):
+    """Parse 'yaw', '-yaw', 'pitch', 'roll' etc. into (name, sign).
+    Names are the fused orientation angles (vs ``_resolve_axis`` which
+    parses raw gyro x/y/z). Bare name defaults to positive sign.
+    """
+    s = str(spec).strip().lower()
+    sign = 1.0
+    if s.startswith("-"):
+        sign = -1.0
+        s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+    if s not in _EULER_NAMES:
+        raise ValueError(
+            "bad fusion axis '{}', expect one of yaw/pitch/roll "
+            "(with optional +/-)".format(spec))
+    return s, sign
+
+
+# Fusion-family movement types and their default (x_axis, y_axis)
+# orientation-angle sources. The user can override either axis per
+# mode via imu_fusion_x_axis / imu_fusion_y_axis.
+_FUSION_AXIS_DEFAULTS = {
+    # hand-held: tip side to side (roll) → left/right, nod → up/down.
+    "fusion":            ("roll", "pitch"),
+    # head/hat: turn (yaw rotation) → left/right, nod → up/down.
+    "attached_to_a_hat": ("yaw",  "pitch"),
+}
+
+# Friendly aliases for the mode string.
+_MODE_ALIASES = {"hat": "attached_to_a_hat"}
+
+
 class Pointing:
     """Quaternion + gyro → cursor-deltas helper.
 
@@ -174,6 +210,11 @@ class Pointing:
             before scaling, so a big flip doesn't fling the cursor.
         invert_x / invert_y: flip fusion-mode left/right or up/down
             to match how the unit is held.
+        accel_factor: fusion-mode acceleration. Cursor speed gets an
+            extra multiplier that ramps from 1x for small movements up
+            to ``accel_factor`` at full tilt/turn (tilt_max_deg), so
+            large/fast sensor moves fling the cursor while small ones
+            stay precise. 1.0 = linear (off); default 4.0 in firmware.
     """
 
     def __init__(self, gain=400.0, deadband_dps=1.5,
@@ -184,18 +225,22 @@ class Pointing:
                  mode="fusion",
                  tilt_deadband_deg=4.0, tilt_gain=25.0,
                  tilt_max_deg=35.0,
-                 invert_x=False, invert_y=False):
+                 invert_x=False, invert_y=False,
+                 fusion_x_axis=None, fusion_y_axis=None,
+                 accel_factor=1.0):
         self._gain = float(gain)
         self._deadband_dps = float(deadband_dps)
         self._alpha = max(0.001, min(1.0, float(alpha)))
         self._accel_expo = float(accel_expo)
         self._max_per_tick = float(max_per_tick)
+        self._accel_factor = max(1.0, float(accel_factor))
         self._yaw_idx,   self._yaw_sign   = _resolve_axis(yaw_axis)
         self._pitch_idx, self._pitch_sign = _resolve_axis(pitch_axis)
         self._stillness_s = float(stillness_recenter_s)
 
         self._mode = str(mode).strip().lower()
-        if self._mode not in ("fusion", "rate"):
+        self._mode = _MODE_ALIASES.get(self._mode, self._mode)
+        if self._mode not in ("rate",) and self._mode not in _FUSION_AXIS_DEFAULTS:
             print("Pointing: unknown mode '{}', using 'fusion'".format(
                 self._mode))
             self._mode = "fusion"
@@ -204,6 +249,14 @@ class Pointing:
         self._tilt_max_deg = float(tilt_max_deg)
         self._invert_x = bool(invert_x)
         self._invert_y = bool(invert_y)
+
+        # Fusion-family orientation-angle sources for x / y. Default
+        # per mode; an explicit config override wins. A bad override
+        # must never brick the device — fall back to the mode default
+        # with a warning (a typo in config.txt is easy to make).
+        def_x, def_y = _FUSION_AXIS_DEFAULTS.get(self._mode, ("roll", "pitch"))
+        self._fx_name, self._fx_sign = self._safe_euler_axis(fusion_x_axis, def_x)
+        self._fy_name, self._fy_sign = self._safe_euler_axis(fusion_y_axis, def_y)
 
         self._last_t = None
         self._zero_yaw = None
@@ -215,9 +268,33 @@ class Pointing:
         self._dy_carry = 0.0
         self._still_since = None
 
+    @staticmethod
+    def _safe_euler_axis(spec, default):
+        """Resolve an orientation-axis spec, falling back to ``default``
+        (which is trusted) on any bad value so a config typo can't
+        crash boot.
+        """
+        if spec:
+            try:
+                return _resolve_euler_axis(spec)
+            except ValueError as e:
+                print("Pointing: {}; using '{}'".format(e, default))
+        return _resolve_euler_axis(default)
+
     @property
     def mode(self):
         return self._mode
+
+    @property
+    def axis_map(self):
+        """Human-readable cursor-axis source map, for boot logging."""
+        if self._mode == "rate":
+            return "x=gyro[{}]*{:+.0f} y=gyro[{}]*{:+.0f}".format(
+                self._yaw_idx, self._yaw_sign,
+                self._pitch_idx, self._pitch_sign)
+        sx = "-" if self._fx_sign < 0 else ""
+        sy = "-" if self._fy_sign < 0 else ""
+        return "x={}{} y={}{}".format(sx, self._fx_name, sy, self._fy_name)
 
     def recenter(self, yaw, pitch, roll):
         """Mark current absolute orientation as the new zero pose."""
@@ -271,19 +348,46 @@ class Pointing:
         return (self._curve(yaw_dps,   self._accel_expo, self._gain, dt),
                 self._curve(pitch_dps, self._accel_expo, self._gain, dt))
 
-    def _tilt_drive(self, abs_pitch_rad, abs_roll_rad, dt):
-        """Tilt-as-joystick: cursor velocity from how far the unit is
-        tilted off level. Forward/back tilt (pitch) → y, tipping side
-        to side (roll) → x. Returns (rdx_raw, rdy_raw).
+    def _accel(self, mag_deg):
+        """Acceleration multiplier for a movement of magnitude
+        ``mag_deg`` (deg past the deadband). Ramps linearly from 1x at
+        zero to ``accel_factor`` at full span (tilt_max - deadband), so
+        large/fast moves are boosted while small ones stay 1:1.
         """
-        # Clamp magnitude first so a big flip saturates rather than
-        # flings, then remove the near-level deadband.
-        ex = _clamp(math.degrees(abs_roll_rad),
-                    -self._tilt_max_deg, self._tilt_max_deg)
-        ey = _clamp(math.degrees(abs_pitch_rad),
-                    -self._tilt_max_deg, self._tilt_max_deg)
-        ex = _deadband_signed(ex, self._tilt_deadband_deg)
-        ey = _deadband_signed(ey, self._tilt_deadband_deg)
+        if self._accel_factor <= 1.0:
+            return 1.0
+        span = self._tilt_max_deg - self._tilt_deadband_deg
+        if span <= 0.0:
+            return 1.0
+        norm = mag_deg / span
+        if norm > 1.0:
+            norm = 1.0
+        return 1.0 + (self._accel_factor - 1.0) * norm
+
+    def _tilt_drive(self, angles, dt):
+        """Tilt/turn-as-joystick: cursor velocity from how far the
+        unit's orientation has moved off the zero pose. The x and y
+        axes each read a configured fused angle (``angles`` maps
+        'yaw'/'pitch'/'roll' → radians). Defaults: roll→x, pitch→y in
+        plain fusion; yaw→x, pitch→y in attached_to_a_hat. Returns
+        (rdx_raw, rdy_raw).
+        """
+        ax_deg = math.degrees(angles[self._fx_name]) * self._fx_sign
+        ay_deg = math.degrees(angles[self._fy_name]) * self._fy_sign
+
+        # Clamp magnitude first so a big move saturates rather than
+        # flings, then remove the near-center deadband.
+        ex = _deadband_signed(
+            _clamp(ax_deg, -self._tilt_max_deg, self._tilt_max_deg),
+            self._tilt_deadband_deg)
+        ey = _deadband_signed(
+            _clamp(ay_deg, -self._tilt_max_deg, self._tilt_max_deg),
+            self._tilt_deadband_deg)
+
+        # Acceleration: large movements get up to accel_factor x extra
+        # speed, small ones stay 1:1. Applied per-axis on the magnitude.
+        ex *= self._accel(abs(ex))
+        ey *= self._accel(abs(ey))
 
         rdx = self._curve(ex, self._accel_expo, self._tilt_gain, dt)
         rdy = self._curve(ey, self._accel_expo, self._tilt_gain, dt)
@@ -319,7 +423,8 @@ class Pointing:
         if self._mode == "rate":
             rdx_raw, rdy_raw = self._rate_drive(gyro, dt)
         else:
-            rdx_raw, rdy_raw = self._tilt_drive(abs_pitch, abs_roll, dt)
+            rdx_raw, rdy_raw = self._tilt_drive(
+                {"yaw": abs_yaw, "pitch": abs_pitch, "roll": abs_roll}, dt)
 
         rdx_int, self._dx_carry = self._split_int_carry(rdx_raw, self._dx_carry)
         rdy_int, self._dy_carry = self._split_int_carry(rdy_raw, self._dy_carry)

@@ -85,8 +85,10 @@ class SipPuffDevice:
             pitch_axis=str(self._config.get("imu_pitch_axis", "-x")),
             stillness_recenter_s=float(self._config.get(
                 "imu_pointing_stillness_recenter_s", 0.0)),
-            # Movement type: "fusion" (tilt-as-joystick, default) or
-            # "rate" (gyro air-mouse). Fusion adds the tilt tunables.
+            # Movement type: "fusion" (tilt-as-joystick, default),
+            # "attached_to_a_hat" (turn→left/right, nod→up/down), or
+            # "rate" (gyro air-mouse). Fusion family adds tilt tunables
+            # and optional per-axis orientation-source overrides.
             mode=str(self._config.get("imu_pointing_mode", "fusion")),
             tilt_deadband_deg=float(
                 self._config.get("imu_tilt_deadband_deg", 4.0)),
@@ -94,8 +96,12 @@ class SipPuffDevice:
             tilt_max_deg=float(self._config.get("imu_tilt_max_deg", 35.0)),
             invert_x=bool(self._config.get("imu_tilt_invert_x", False)),
             invert_y=bool(self._config.get("imu_tilt_invert_y", False)),
+            fusion_x_axis=self._config.get("imu_fusion_x_axis"),
+            fusion_y_axis=self._config.get("imu_fusion_y_axis"),
+            accel_factor=float(self._config.get("imu_accel_factor", 4.0)),
         )
-        print("Pointing: mode={}".format(self._pointing.mode))
+        print("Pointing: mode={} ({})".format(
+            self._pointing.mode, self._pointing.axis_map))
 
         # Display claims SPI1 + GP10–16 for the LCD variant, or the
         # shared I2C bus for the OLED variant. Disabled entirely
@@ -141,6 +147,15 @@ class SipPuffDevice:
             1, int(self._config.get("puff_repeat_multiplier", 1)))
         self._sip_repeat_mult  = max(
             1, int(self._config.get("sip_repeat_multiplier", 1)))
+        # What a HELD puff / sip does in mouse mode: "click" auto-fires
+        # the matching mouse button (left for puff, right for sip) at
+        # the repeat rate; "scroll" sends the wheel (the older default).
+        # Puff defaults to click so a held puff = easy auto-fire clicks;
+        # sip keeps scroll so the wheel is still reachable.
+        self._mouse_puff_hold_action = str(
+            self._config.get("mouse_puff_hold_action", "click")).strip().lower()
+        self._mouse_sip_hold_action = str(
+            self._config.get("mouse_sip_hold_action", "scroll")).strip().lower()
         print("Output: mode={}".format(self._output_mode))
 
         if self._sensor.available:
@@ -287,6 +302,18 @@ class SipPuffDevice:
 
     def _run_normal(self):
         print("SipPuff: entering RUN mode")
+
+        # Mouse mode: home the cursor to the middle of the screen once
+        # at startup so pointing starts from a known position. A HID
+        # mouse can only move relatively, so MouseOutput.center slams
+        # to a corner then moves half-screen. Configurable; on by
+        # default. Set the screen size to match your display.
+        if (self._output_mode == "mouse"
+                and self._mouse is not None and self._mouse.available
+                and bool(self._config.get("mouse_center_on_start", True))):
+            self._mouse.center(
+                int(self._config.get("mouse_screen_width", 1920)),
+                int(self._config.get("mouse_screen_height", 1080)))
         last_log = time.monotonic()
         # The live serial line is the primary observation surface for
         # IMU-as-mouse builds. Default 5 s — the column-aligned line
@@ -637,9 +664,14 @@ class SipPuffDevice:
             self._display.flash("puff_click")
             return
         if event == "puff_repeat":
-            self._mouse.scroll(
-                +self._mouse_scroll_amount * self._puff_repeat_mult)
-            self._display.flash("up")
+            if self._mouse_puff_hold_action == "click":
+                for _ in range(self._puff_repeat_mult):
+                    self._mouse.click_left()
+                self._display.flash("puff_click")
+            else:
+                self._mouse.scroll(
+                    +self._mouse_scroll_amount * self._puff_repeat_mult)
+                self._display.flash("up")
             return
         if event == "double_puff":
             self._mouse.click_middle()
@@ -650,9 +682,14 @@ class SipPuffDevice:
             self._display.flash("sip_click")
             return
         if event == "sip_repeat":
-            self._mouse.scroll(
-                -self._mouse_scroll_amount * self._sip_repeat_mult)
-            self._display.flash("down")
+            if self._mouse_sip_hold_action == "click":
+                for _ in range(self._sip_repeat_mult):
+                    self._mouse.click_right()
+                self._display.flash("sip_click")
+            else:
+                self._mouse.scroll(
+                    -self._mouse_scroll_amount * self._sip_repeat_mult)
+                self._display.flash("down")
             return
         if event == "double_sip":
             self._display.flash("sip_click")

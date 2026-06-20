@@ -35,8 +35,10 @@ verbose = true
 #             - Cursor x/y from the rate-based pointing stream
 #             - Short puff = LEFT mouse click
 #             - Short sip  = RIGHT mouse click
-#             - Held puff  = scroll wheel UP
-#             - Held sip   = scroll wheel DOWN
+#             - Held puff  = repeated LEFT clicks (auto-fire)  [default]
+#             - Held sip   = scroll wheel DOWN                 [default]
+#               (each held action is configurable — see
+#                mouse_puff_hold_action / mouse_sip_hold_action)
 #             - Double puff = MIDDLE click (reserved)
 #           Requires CircuitPython's default HID composite (mouse +
 #           keyboard + consumer-control) — no boot.py changes needed.
@@ -55,14 +57,36 @@ verbose = true
 #   short = breath ends within hold_to_repeat_s (default 0.4s)
 #   held  = breath sustained past hold_to_repeat_s (emits *_repeat)
 #   double = two breaths within double_*_window_s
-output_mode = encoder
+output_mode = mouse
 
 # Mouse-mode tunables.
 # Per-tick motion below this is dropped (no HID report sent). Lets
 # the gyro deadband sit a hair above zero without flooding the host.
 mouse_motion_min_per_tick = 1
-# Scroll-wheel amount per puff_repeat / sip_repeat tick.
+# Scroll-wheel amount per puff_repeat / sip_repeat tick (only used
+# when the matching *_hold_action below is "scroll").
 mouse_scroll_per_repeat = 1
+
+# What a HELD breath does in mouse mode once it passes its
+# *_hold_to_repeat_s threshold:
+#   click  — auto-fire the matching button at the repeat rate
+#            (puff = LEFT, sip = RIGHT). Makes clicking easy: hold to
+#            machine-gun clicks.
+#   scroll — send the mouse wheel (puff = up, sip = down). Older default.
+# Puff defaults to click (held puff = repeated left clicks after 1 s);
+# sip stays on scroll so the wheel is still reachable.
+mouse_puff_hold_action = click
+mouse_sip_hold_action  = scroll
+
+# Center the cursor on the screen once at mouse-mode startup, so
+# pointing always begins from a known spot. A USB mouse only moves
+# relatively, so this homes to the top-left corner then moves half a
+# screen down/right — set the screen size to match your display.
+# Host pointer acceleration makes the landing approximate, not exact.
+# Set mouse_center_on_start = false to disable.
+mouse_center_on_start = true
+mouse_screen_width    = 1920
+mouse_screen_height   = 1080
 
 # Keyboard-mode key map (used only when output_mode = keyboard).
 # Each value is a Keycode name from adafruit_hid (case-insensitive):
@@ -152,35 +176,55 @@ i2c_imu_4    = none
 # =====================================================================
 # Movement type — how IMU motion maps to cursor motion:
 #
-#   fusion  (default for this sensor) — TILT-AS-JOYSTICK. The fused
+#   fusion              — TILT-AS-JOYSTICK (hand-held). The fused
 #           quaternion gives the unit's absolute tilt off "level";
 #           cursor SPEED scales with how far it's tilted. Tilt
-#           forward/back (pitch) = move up/down, tip side to side
-#           (roll) = move left/right. Tilt-and-hold keeps gliding;
-#           return to level to stop. Both axes are gravity-referenced
-#           so there's no yaw drift. The "level" pose is captured at
-#           boot (and re-captured by stillness-recenter, below).
+#           forward/back (pitch) = up/down, tip side to side (roll) =
+#           left/right. Tilt-and-hold keeps gliding; return to level
+#           to stop. Both axes gravity-referenced (no yaw drift).
 #
-#   rate    — GYRO AIR-MOUSE. Cursor velocity tracks the yaw/pitch
-#           angular RATE; the cursor moves only while you're rotating
-#           the unit. Uses the imu_yaw_axis / imu_pitch_axis +
-#           imu_pointing_gain knobs.
-imu_pointing_mode = fusion
+#   attached_to_a_hat   — same tilt-as-joystick feel, but mapped for a
+#           HEAD/HAT-MOUNTED unit: NOD (pitch) = up/down, TURN your
+#           head (yaw rotation) = left/right. (alias: hat)
+#           Note: the left/right (yaw) axis is NOT gravity-referenced,
+#           so it can drift slowly — bump imu_pointing_stillness_
+#           recenter_s if the cursor creeps sideways when you hold
+#           your head still.
+#
+#   rate                — GYRO AIR-MOUSE. Cursor velocity tracks the
+#           yaw/pitch angular RATE; moves only while you're rotating.
+#           Uses imu_yaw_axis / imu_pitch_axis + imu_pointing_gain.
+imu_pointing_mode = attached_to_a_hat
 
-# --- Fusion (tilt-as-joystick) tunables ---
-# Tilt within this many degrees of level reads as zero — keeps the
-# cursor still when the unit is roughly level. Raise if it creeps.
+# --- Fusion-family (fusion + attached_to_a_hat) tunables ---
+# Motion within this many degrees of the zero pose reads as zero —
+# keeps the cursor still when you're holding roughly centered.
 imu_tilt_deadband_deg = 4.0
-# Speed scale: cursor units per second per degree of tilt past the
-# deadband. Bigger = faster cursor for the same tilt. Tune to taste.
+# Speed scale: cursor units per second per degree past the deadband.
+# Bigger = faster cursor for the same tilt/turn. Tune to taste.
 imu_tilt_gain = 25.0
-# Tilt beyond this magnitude (deg) stops adding speed — a full flip
-# saturates instead of flinging the cursor across the screen.
+# Movement beyond this magnitude (deg) stops adding speed — a big
+# turn/tilt saturates instead of flinging the cursor.
 imu_tilt_max_deg = 35.0
-# Flip an axis if the cursor goes the wrong way for how you hold the
-# unit. invert_x = left/right, invert_y = up/down.
+# Acceleration: large/fast sensor movements get an extra speed boost
+# so the cursor crosses the screen quickly, while small movements stay
+# 1:1 for precision. The multiplier ramps from 1x (tiny move) up to
+# this value at full tilt/turn (imu_tilt_max_deg). 1.0 = off (linear).
+imu_accel_factor = 4.0
+# Flip an axis if the cursor goes the wrong way for your mounting.
+# invert_x = left/right, invert_y = up/down.
 imu_tilt_invert_x = false
 imu_tilt_invert_y = false
+# Advanced: override which fused orientation angle drives each cursor
+# axis. One of yaw / pitch / roll, optional +/- sign (e.g. -yaw).
+# Leave unset to use the per-mode defaults (fusion: x=roll y=pitch;
+# attached_to_a_hat: x=yaw y=pitch). Handy for odd mountings until
+# the planned guided axis-calibration routine lands.
+# These values match THIS unit's hat mounting (the IMU sits rotated,
+# so the wearer's nod registers as roll, not pitch): turn head ->
+# left/right via -yaw, nod -> up/down via -roll. Re-derive per build.
+imu_fusion_x_axis = -yaw
+imu_fusion_y_axis = -roll
 
 # --- Rate (gyro air-mouse) pipeline ---
 # Pipeline (per loop tick, in order):
@@ -327,8 +371,14 @@ sip_signal_scale  = 1.0
 # =====================================================================
 # TIMINGS
 # =====================================================================
-double_puff_window_s   = 0.45
-double_sip_window_s    = 0.45
+# Double-tap window. This is ALSO the delay before a *single* click
+# fires: a lone puff/sip is held back this long to see if a second one
+# arrives (single vs double).
+# PUFF set to 0 = NO delay: a puff click fires immediately on release
+# (the trade-off is double-puff / middle-click is disabled for puff).
+# Sip keeps a small window so double-sip still works.
+double_puff_window_s   = 0.0
+double_sip_window_s    = 0.225
 # Default hold-to-repeat threshold for both directions. A breath
 # released sooner than this is a "short tap" (fires the encoder
 # pushbutton or button 2); a breath held longer is a "scroll" and
@@ -348,20 +398,21 @@ hold_to_repeat_s       = 0.40
 # Drop further (e.g. 0.3) to make scrolling start even sooner;
 # raise toward 0.8 if you find yourself accidentally scrolling
 # during deliberate taps.
-puff_hold_to_repeat_s  = 0.50
+# Puff raised to 1.0 s: a puff released within 1 s is a single click;
+# held LONGER than 1 s it starts auto-repeating (in mouse mode that's
+# repeated left clicks — see mouse_puff_hold_action). The longer
+# window also makes a deliberate single click more forgiving to
+# release. Sip stays at 0.5 s (it still scrolls when held).
+puff_hold_to_repeat_s  = 1.00
 sip_hold_to_repeat_s   = 0.50
 # Repeat-rate mapping: rate_hz = magnitude_kpa * repeat_rate_factor,
-# clamped to [repeat_min_hz, repeat_max_hz]. magnitude is clamped to
-# repeat_full_scale_kpa above. With the defaults below this is a 1:1
-# kPa→Hz mapping: a 1 kPa held breath ticks once a second, a 10 kPa
-# held breath ticks ten times a second, anything above 10 kPa is
-# clamped to 10 Hz.
-# Bump repeat_rate_factor above 1.0 to make scrolling faster per kPa
-# of effort. A logarithmic curve is on the roadmap (see
-# repeat_rate_curve note); for now "linear" is the only supported
-# value.
-repeat_min_hz          = 1.0
-repeat_max_hz          = 10.0
+# clamped to [repeat_min_hz, repeat_max_hz]. This sets how fast a held
+# breath auto-repeats — the puff CLICK auto-fire and the sip scroll.
+# Pinned to a FIXED 5 Hz (min == max) so the button repeats every
+# 0.2 s regardless of how hard you puff. To restore pressure-scaled
+# repeats, spread these apart again (e.g. min 1, max 10).
+repeat_min_hz          = 5.0
+repeat_max_hz          = 5.0
 repeat_full_scale_kpa  = 10.0
 repeat_rate_factor     = 1.0
 repeat_rate_curve      = linear
