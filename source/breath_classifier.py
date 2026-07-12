@@ -102,6 +102,18 @@ class BreathClassifier:
         # with mag clamped at >=min_kpa so the log stays defined.
         self._rate_curve = str(config.get(
             "repeat_rate_curve", "linear")).strip().lower()
+        # Power-curve shaping exponent (used when repeat_rate_curve is
+        # "power"/"exponential"). >1 keeps light holds slow and makes
+        # the rate climb steeply toward max as pressure rises — i.e.
+        # a wide dynamic range between gentle and hard breaths. 1.0 is
+        # a straight interpolation; <1 front-loads the speed.
+        self._rate_exponent = float(config.get("repeat_rate_exponent", 2.0))
+        # Geometric/"doubling" curve: rate starts at repeat_min_hz and
+        # DOUBLES for every repeat_rate_doubling_kpa of pressure, until
+        # it hits repeat_max_hz. e.g. min 0.25 Hz, doubling per 1 kPa,
+        # max 32 Hz → 0.25,0.5,1,2,4,8,16,32 at 0..7 kPa.
+        self._rate_double_kpa = float(
+            config.get("repeat_rate_doubling_kpa", 1.0))
         self._verbose   = bool(config.get("verbose", False))
 
         self._state = _IDLE
@@ -315,11 +327,24 @@ class BreathClassifier:
         once a second, 10 kPa pulses ten times a second, and anything
         above 10 kPa is clamped to 10 Hz.
         """
-        mag = max(0.0, min(self._rate_full, magnitude_kpa))
-        if self._rate_curve == "logarithmic":
-            # Sketch only — see __init__ TODO. Falls through to linear.
-            pass
-        hz = mag * self._rate_factor
+        raw = max(0.0, magnitude_kpa)
+        mag = min(self._rate_full, raw)
+        if self._rate_curve in ("geometric", "doubling"):
+            # Rate doubles every repeat_rate_doubling_kpa of pressure,
+            # from repeat_min_hz up to the repeat_max_hz clamp. Uses the
+            # unclamped magnitude so the doubling runs until max caps it.
+            step = self._rate_double_kpa if self._rate_double_kpa > 0 else 1.0
+            hz = self._rate_min * (2.0 ** (raw / step))
+        elif self._rate_curve in ("power", "exponential"):
+            # Interpolate min->max across [0, full_scale], shaped by an
+            # exponent. exponent>1 => low pressure stays slow, high
+            # pressure ramps up fast (wide dynamic range). Decoupled
+            # from repeat_rate_factor, which the linear rule uses.
+            frac = (mag / self._rate_full) if self._rate_full > 0 else 1.0
+            frac = frac ** self._rate_exponent
+            hz = self._rate_min + (self._rate_max - self._rate_min) * frac
+        else:
+            hz = mag * self._rate_factor
         if hz < self._rate_min:
             hz = self._rate_min
         elif hz > self._rate_max:

@@ -92,6 +92,11 @@ VARIANTS = {
         "repeat_min_hz":  3.0,    # tick rate at puff_on_kpa
         "repeat_max_hz": 20.0,    # tick rate at repeat_full_scale_kpa
         "repeat_full_scale_kpa": 3.0,
+        # MPX bargraph full scale (kPa). Decoupled from the repeat-rate
+        # curve above so the on-screen bar can span the sensor's full
+        # range without retuning held-breath repeats. None → follow
+        # repeat_full_scale_kpa (legacy behavior).
+        "display_mpx_full_scale_kpa": None,
 
         # --- Optional 1.8" SPI color LCD (ST7735R, 128x160) ---
         # Wiring matches J2 connector in project reference doc 10.5.
@@ -393,7 +398,7 @@ _USER_OVERRIDABLE = (
     "display_test_pattern", "display_baudrate",
     "display_width", "display_height",
     "display_i2c_address", "display_i2c_frequency",
-    "display_lps_full_scale_kpa",
+    "display_lps_full_scale_kpa", "display_mpx_full_scale_kpa",
     # Pin overrides for the I2C bus only — whitelisted because
     # different prototype boards wire the OLED to different pin
     # pairs. (Other pin assignments stay locked to avoid bricks.)
@@ -463,7 +468,8 @@ _USER_OVERRIDABLE = (
     # Repeat-rate map: rate_hz = magnitude_kpa * repeat_rate_factor,
     # clamped to [repeat_min_hz, repeat_max_hz]. See breath_classifier
     # for the formula and the planned logarithmic alternative.
-    "repeat_rate_factor", "repeat_rate_curve",
+    "repeat_rate_factor", "repeat_rate_curve", "repeat_rate_exponent",
+    "repeat_rate_doubling_kpa",
     # LPS28 auto-rezero: after N s of stable idle, snap the baseline
     # so the gauge reads zero again. 0 disables.
     "lps_auto_rezero_idle_s", "lps_auto_rezero_threshold_kpa",

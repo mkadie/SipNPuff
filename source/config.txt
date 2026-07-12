@@ -416,6 +416,10 @@ repeat_max_hz          = 5.0
 repeat_full_scale_kpa  = 10.0
 repeat_rate_factor     = 1.0
 repeat_rate_curve      = linear
+# MPX bargraph full scale (kPa), decoupled from the repeat curve above.
+# Set to the sensor's usable range so the graph doesn't peg early — a
+# hard squeeze on the mouthpiece peaks around 10.7 kPa.
+display_mpx_full_scale_kpa = 10.0
 
 # Per-direction repeat multipliers: emit N CW/CCW clicks (or scroll
 # ticks in mouse mode) for every puff_repeat / sip_repeat event.

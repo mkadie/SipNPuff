@@ -115,10 +115,15 @@ class SipPuffDevice:
             self._config.get("puff_signal_scale", 1.0)))
         sip_scale_cfg = max(0.001, float(
             self._config.get("sip_signal_scale",  1.0)))
+        # MPX bar full scale: dedicated key if set, else fall back to
+        # the repeat-rate full scale so legacy configs are unchanged.
+        mpx_full_scale = self._config.get("display_mpx_full_scale_kpa")
+        if mpx_full_scale is None:
+            mpx_full_scale = self._config["repeat_full_scale_kpa"]
         self._display = DisplayManager(self._config, {
             "puff_on":    self._config["puff_on_kpa"] / puff_scale_cfg,
             "sip_on":     self._config["sip_on_kpa"]  / sip_scale_cfg,
-            "full_scale": self._config["repeat_full_scale_kpa"],
+            "full_scale": mpx_full_scale,
         }, i2c=self._i2c)
         self._encoder    = EncoderEmulator(self._config)
         self._xac        = XacOutput(self._config)
