@@ -64,6 +64,16 @@ class PressureSensor:
         """Currently learned zero-pressure baseline, in kPa."""
         return self._baseline_kpa
 
+    def rezero_by(self, delta_kpa):
+        """Shift the learned baseline by ``delta_kpa``.
+
+        Used by the analog auto-rezero: when the idle gauge has drifted
+        to a mean of ``delta_kpa`` (e.g. a sealed bellows settling),
+        folding that into the baseline makes gauge_kpa() read ~0 again
+        without a blocking re-calibration.
+        """
+        self._baseline_kpa += float(delta_kpa)
+
     # --- Raw conversions ----------------------------------------
 
     def raw_average(self):

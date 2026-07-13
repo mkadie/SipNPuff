@@ -126,6 +126,11 @@ class BreathClassifier:
         # of a scroll and suppress the single-event emission — otherwise
         # every sustained puff/sip would end with a spurious "select".
         self._repeat_emitted  = False
+        # Snapshot of _repeat_emitted taken when entering PEND, so the
+        # window-expiry code knows whether to emit the single-event
+        # fallback. We still ALWAYS enter PEND after a repeat so a
+        # maxed-and-released double still forms a select.
+        self._pend_after_repeat = False
         # Signed peak (most positive for puff, most negative for sip)
         # reached during the current PUFF_ON / SIP_ON. Resets on entry.
         self._peak_kpa        = 0.0
@@ -213,9 +218,12 @@ class BreathClassifier:
         elif self._pend_released and p_kpa >= self._puff_on:
             self._enter(_PUFF_ON, now, double_pending=True)
             return "double_puff"
-        # Window expired → fire the single puff we held back.
+        # Window expired → fire the single puff we held back, unless this
+        # breath already scrolled (then the repeats were the intent).
         if now >= self._t_pending_until:
             self._enter(_IDLE, now)
+            if self._pend_after_repeat:
+                return None
             return "puff"
         return None
 
@@ -229,6 +237,8 @@ class BreathClassifier:
             return "double_sip"
         if now >= self._t_pending_until:
             self._enter(_IDLE, now)
+            if self._pend_after_repeat:
+                return None
             return "sip"
         return None
 
@@ -244,13 +254,13 @@ class BreathClassifier:
             if self._double_consumed:
                 self._enter(_IDLE, now)
                 return None
-            # If repeats already fired during this breath, treat the
-            # release as the natural end of a scroll. Skip the
-            # pending/single emission so we don't queue a spurious
-            # "select" after every long scroll.
-            if self._repeat_emitted:
-                self._enter(_IDLE, now)
-                return None
+            # Always enter PEND to watch for a second puff — a maxed
+            # (repeated) puff that's released and re-puffed must still
+            # form a double-puff/select. Whether the window-expiry emits
+            # a single "puff" depends on _pend_after_repeat: suppressed
+            # after a scroll so a long hold doesn't tack on a spurious
+            # single.
+            self._pend_after_repeat = self._repeat_emitted
             self._t_pending_until = now + self._double_puff_window
             self._enter(_PUFF_PEND, now)
             return None
@@ -274,11 +284,9 @@ class BreathClassifier:
             if self._double_consumed:
                 self._enter(_IDLE, now)
                 return None
-            # Suppress the single-event on release if we already
-            # scrolled (see _poll_puff_on for rationale).
-            if self._repeat_emitted:
-                self._enter(_IDLE, now)
-                return None
+            # Always enter PEND to watch for a double-sip, even after a
+            # scroll (mirror of _poll_puff_on).
+            self._pend_after_repeat = self._repeat_emitted
             self._t_pending_until = now + self._double_sip_window
             self._enter(_SIP_PEND, now)
             return None

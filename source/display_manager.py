@@ -100,6 +100,9 @@ class DisplayManager:
         self._lps_full_scale = 0.1
         self._t_next_update = 0.0
         self._last_rendered = None
+        # Set from config when the color driver is created; default
+        # async (background auto_refresh).
+        self._refresh_sync = False
 
         # Event-indicator boxes at the bottom of the screen. Four
         # named slots: "up", "down", "puff_click", "sip_click". The
@@ -287,6 +290,18 @@ class DisplayManager:
         # gc9a01: no offset/bgr/invert kwargs.
 
         self._display = _Driver(bus, **kw)
+        # Refresh mode: "sync" turns OFF displayio's background
+        # auto_refresh and pushes the frame explicitly inside update()
+        # (blocking, in-lockstep with the poll loop); default leaves
+        # auto_refresh ON so the SPI/DMA push happens in the background,
+        # decoupled ("out of sync") from the sensor reads.
+        self._refresh_sync = bool(config.get("display_refresh_sync", False))
+        try:
+            self._display.auto_refresh = not self._refresh_sync
+        except Exception:
+            pass
+        print("Display: refresh={}".format(
+            "sync" if self._refresh_sync else "async(auto_refresh)"))
         print("Display: {} on SPI {}x{} rot={} kwargs={} baud={}".format(
             controller.upper(), width, height, rotation,
             {k: kw[k] for k in kw if k not in ("width", "height", "rotation")},
@@ -803,6 +818,10 @@ class DisplayManager:
                 fmt = "{:.3f}" if self._lps_full_scale < 0.5 else "{:.2f}"
                 self._lps_puff_value_label.text = fmt.format(lps_puff_mag)
                 self._lps_sip_value_label.text  = fmt.format(lps_sip_mag)
+            # Sync mode: push the frame now (blocking, in the poll loop).
+            # Async mode leaves it to background auto_refresh.
+            if self._refresh_sync:
+                self._display.refresh()
         except Exception as e:
             if self._verbose:
                 print("Display: update error ({})".format(e))

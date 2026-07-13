@@ -166,6 +166,31 @@ VARIANTS = {
 }
 
 
+# pico2_mpxv7002dp:
+#   Same Pico 2 board, but an MPXV7002DP bidirectional (-2..+2 kPa)
+#   analog sensor replaces the MPX5010DP. Unlike the puff-only MPX5010,
+#   the MPXV7002 reads BOTH sip and puff on a single port:
+#       Vout = VS * (0.2 * P_kPa + 0.5),  VS = 5.0 V
+#       -> 2.5 V at 0 kPa, 0.5 V at -2 kPa, 4.5 V at +2 kPa
+#   so the sip branch can stay on the analog sensor (no LPS28 needed).
+#   Derived from the MPX5010DP variant: only the sensor calibration and
+#   the pressure-range-dependent tuning differ. The 0.5-4.5 V output
+#   passes the same 1.5 divider to ~0.33-3.0 V, safe for the 3.3 V ADC.
+VARIANTS["pico2_mpxv7002dp"] = dict(VARIANTS["pico2_mpx5010dp"])
+VARIANTS["pico2_mpxv7002dp"].update({
+    "mpx_slope": 0.2,
+    "mpx_offset": 0.5,
+    # Bidirectional +/-2 kPa is a much smaller span than the 0-10 kPa
+    # MPX5010, so thresholds and repeat/display scales shrink to match.
+    "puff_on_kpa":  0.25,
+    "puff_off_kpa": 0.12,
+    "sip_on_kpa":  -0.25,
+    "sip_off_kpa": -0.12,
+    "repeat_full_scale_kpa": 1.5,
+    "display_mpx_full_scale_kpa": 2.0,
+})
+
+
 DEFAULT_VARIANT = "pico2_mpx5010dp"
 
 
@@ -381,6 +406,11 @@ DISPLAY_PRESETS = {
 # assignments are intentionally NOT user-tunable — wrong pins can
 # brick the device.
 _USER_OVERRIDABLE = (
+    "variant",
+    # Sensor calibration — overridable so a board with a different
+    # analog sensor can be corrected without a code change (the named
+    # variants set sane defaults; see VARIANTS).
+    "mpx_slope", "mpx_offset",
     "puff_on_kpa", "puff_off_kpa",
     "sip_on_kpa", "sip_off_kpa",
     "double_puff_window_s", "double_sip_window_s",
@@ -399,6 +429,7 @@ _USER_OVERRIDABLE = (
     "display_width", "display_height",
     "display_i2c_address", "display_i2c_frequency",
     "display_lps_full_scale_kpa", "display_mpx_full_scale_kpa",
+    "display_refresh_sync", "loop_profile",
     # Pin overrides for the I2C bus only — whitelisted because
     # different prototype boards wire the OLED to different pin
     # pairs. (Other pin assignments stay locked to avoid bricks.)
@@ -473,6 +504,7 @@ _USER_OVERRIDABLE = (
     # LPS28 auto-rezero: after N s of stable idle, snap the baseline
     # so the gauge reads zero again. 0 disables.
     "lps_auto_rezero_idle_s", "lps_auto_rezero_threshold_kpa",
+    "mpx_auto_rezero_idle_s", "mpx_auto_rezero_threshold_kpa",
     # Per-direction signal scaling — multiplies the gauge signal on
     # that side before the classifier sees it. Compensates for
     # asymmetric breath effort.
@@ -555,13 +587,15 @@ def load_config(variant=None, user_path="/config.txt"):
     Returns a fresh dict — variant defaults overlaid with whitelisted
     user-config values. Caller is free to mutate.
     """
-    name = variant or DEFAULT_VARIANT
+    user = _load_user_config(user_path)
+    # A config.txt ``variant = ...`` key selects the hardware variant
+    # (sensor build) unless the caller passed one explicitly.
+    name = variant or user.get("variant") or DEFAULT_VARIANT
     if name not in VARIANTS:
         print("Config: unknown variant '{}', using '{}'".format(
             name, DEFAULT_VARIANT))
         name = DEFAULT_VARIANT
     cfg = dict(VARIANTS[name])
-    user = _load_user_config(user_path)
 
     # The English-readable ``display = ...`` key takes precedence
     # over the legacy ``display_preset = ...`` key — it's what new

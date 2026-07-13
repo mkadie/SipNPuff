@@ -373,7 +373,51 @@ class SipPuffDevice:
         idle_gauge_sum = 0.0
         idle_gauge_n   = 0
 
+        # Analog (MPX) auto-rezero — same idea as the LPS28 rezero above
+        # but for the analog sensor, which otherwise has no drift
+        # compensation. A sealed bellows (rubber chicken) drifts at
+        # rest; snapping the baseline out when idle stops stray keys.
+        # Opt-in: default idle_s 0.0 = disabled.
+        mpx_rezero_idle_s = float(self._config.get(
+            "mpx_auto_rezero_idle_s", 0.0))
+        mpx_rezero_threshold = float(self._config.get(
+            "mpx_auto_rezero_threshold_kpa", 0.05))
+        mpx_idle_start_t = None
+        mpx_idle_min = 0.0
+        mpx_idle_max = 0.0
+        mpx_idle_sum = 0.0
+        mpx_idle_n   = 0
+
+        # Loop-timing profiler (opt-in via loop_profile). Measures the
+        # full loop period so display refresh stalls show up as spikes
+        # over the ideal poll_period. Prints min/mean/max + stall count
+        # (period > 2x poll_period) every ~3 s.
+        prof_on = bool(self._config.get("loop_profile", False))
+        prof_stall_thresh = 2.0 * self._poll_period
+        prof_prev = None
+        prof_min = 9.9; prof_max = 0.0; prof_sum = 0.0; prof_n = 0
+        prof_stalls = 0; prof_report_t = time.monotonic()
+
         while True:
+            if prof_on:
+                t_loop = time.monotonic()
+                if prof_prev is not None:
+                    per = t_loop - prof_prev
+                    if per < prof_min: prof_min = per
+                    if per > prof_max: prof_max = per
+                    prof_sum += per; prof_n += 1
+                    if per > prof_stall_thresh: prof_stalls += 1
+                prof_prev = t_loop
+                if (t_loop - prof_report_t) >= 3.0 and prof_n > 0:
+                    print("LOOP: n={} mean={:.2f}ms max={:.2f}ms "
+                          "min={:.2f}ms stalls(>{:.0f}ms)={} hz={:.0f}"
+                          .format(prof_n, 1000*prof_sum/prof_n,
+                                  1000*prof_max, 1000*prof_min,
+                                  1000*prof_stall_thresh, prof_stalls,
+                                  prof_n/(t_loop-prof_report_t)))
+                    prof_min=9.9; prof_max=0.0; prof_sum=0.0; prof_n=0
+                    prof_stalls=0; prof_report_t=t_loop
+
             mpx_gauge = (self._sensor.gauge_kpa()
                          if self._sensor.available else 0.0)
             lps_gauge = (self._lps28.gauge_kpa() if lps_available else None)
@@ -431,6 +475,37 @@ class SipPuffDevice:
                     idle_start_t = None
             elif idle_start_t is not None:
                 idle_start_t = None
+
+            # Analog (MPX) auto-rezero — accumulate the idle gauge and,
+            # after mpx_rezero_idle_s of stable idle, fold any drift into
+            # the baseline so the analog gauge reads ~0 again.
+            if (mpx_rezero_idle_s > 0.0 and self._sensor.available
+                    and self._classifier.state == "idle"):
+                now_t = time.monotonic()
+                if mpx_idle_start_t is None:
+                    mpx_idle_start_t = now_t
+                    mpx_idle_min = mpx_gauge
+                    mpx_idle_max = mpx_gauge
+                    mpx_idle_sum = mpx_gauge
+                    mpx_idle_n   = 1
+                else:
+                    if mpx_gauge < mpx_idle_min: mpx_idle_min = mpx_gauge
+                    if mpx_gauge > mpx_idle_max: mpx_idle_max = mpx_gauge
+                    mpx_idle_sum += mpx_gauge
+                    mpx_idle_n   += 1
+                mpx_idle_dur = now_t - mpx_idle_start_t
+                if mpx_idle_dur >= mpx_rezero_idle_s:
+                    spread = mpx_idle_max - mpx_idle_min
+                    mean = mpx_idle_sum / mpx_idle_n
+                    if (spread < 0.15           # stable enough
+                            and abs(mean) > mpx_rezero_threshold):
+                        print("Pressure: auto-rezero (idle {:.1f}s, "
+                              "drift {:+.3f}kPa, spread {:.3f}kPa)"
+                              .format(mpx_idle_dur, mean, spread))
+                        self._sensor.rezero_by(mean)
+                    mpx_idle_start_t = None
+            elif mpx_idle_start_t is not None:
+                mpx_idle_start_t = None
 
             # Pointing is updated every loop so the gyro integral has
             # the smallest possible dt. The first IMU drives the cursor.
@@ -716,6 +791,9 @@ class SipPuffDevice:
             self._display.flash("up")
             return
         if event == "double_puff":
+            # Flush any keys still held before the select so a clean
+            # Select goes to the host (no stray arrow left down).
+            self._keyboard.release_all()
             self._keyboard.tap("double_puff")
             self._display.flash("puff_click")
             return
@@ -729,6 +807,7 @@ class SipPuffDevice:
             self._display.flash("down")
             return
         if event == "double_sip":
+            self._keyboard.release_all()
             self._keyboard.tap("double_sip")
             self._display.flash("sip_click")
             return
