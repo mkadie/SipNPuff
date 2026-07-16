@@ -51,6 +51,11 @@ class BreathClassifier:
         # older configs still work.
         self._double_sip_window  = float(config.get(
             "double_sip_window_s", config["double_puff_window_s"]))
+        # Optimistic-double: emit the single move IMMEDIATELY on release
+        # (no double-tap latency) instead of holding it until the window
+        # expires. A second puff/sip within the window then becomes a
+        # double event, which the dispatcher turns into reverse+select.
+        self._optimistic = bool(config.get("optimistic_double", False))
 
         # --- Adaptive release ---------------------------------------
         # Instead of using a static puff_off / sip_off threshold for
@@ -222,7 +227,9 @@ class BreathClassifier:
         # breath already scrolled (then the repeats were the intent).
         if now >= self._t_pending_until:
             self._enter(_IDLE, now)
-            if self._pend_after_repeat:
+            # Optimistic mode already fired the move on release; a
+            # scrolled breath suppresses the single either way.
+            if self._optimistic or self._pend_after_repeat:
                 return None
             return "puff"
         return None
@@ -237,7 +244,7 @@ class BreathClassifier:
             return "double_sip"
         if now >= self._t_pending_until:
             self._enter(_IDLE, now)
-            if self._pend_after_repeat:
+            if self._optimistic or self._pend_after_repeat:
                 return None
             return "sip"
         return None
@@ -263,6 +270,11 @@ class BreathClassifier:
             self._pend_after_repeat = self._repeat_emitted
             self._t_pending_until = now + self._double_puff_window
             self._enter(_PUFF_PEND, now)
+            # Optimistic mode: fire the move NOW (no double-tap latency);
+            # a second puff reverses it and selects. Scrolled breaths
+            # still suppress the single.
+            if self._optimistic and not self._pend_after_repeat:
+                return "puff"
             return None
 
         # Still held — once past puff_hold_to_repeat_s, emit ticks at
@@ -289,6 +301,8 @@ class BreathClassifier:
             self._pend_after_repeat = self._repeat_emitted
             self._t_pending_until = now + self._double_sip_window
             self._enter(_SIP_PEND, now)
+            if self._optimistic and not self._pend_after_repeat:
+                return "sip"
             return None
 
         held = now - self._t_state_entered

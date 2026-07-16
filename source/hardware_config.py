@@ -262,6 +262,7 @@ _RAW_VALUE_KEYS = _I2C_SLOT_KEYS + (
     "key_puff", "key_sip",
     "key_puff_repeat", "key_sip_repeat",
     "key_double_puff", "key_double_sip",
+    "key_puff_reverse", "key_sip_reverse",
 )
 
 
@@ -473,6 +474,10 @@ _USER_OVERRIDABLE = (
     "key_puff", "key_sip",
     "key_puff_repeat", "key_sip_repeat",
     "key_double_puff", "key_double_sip",
+    "key_puff_reverse", "key_sip_reverse",
+    # Optimistic double-tap select: fire the move immediately, then
+    # reverse+select on a double instead of delaying every single move.
+    "optimistic_double",
     # Repeat-scroll multipliers: emit N CW/CCW clicks per puff_repeat /
     # sip_repeat event. Asymmetric defaults handy when one direction
     # of the breath is physically harder than the other.

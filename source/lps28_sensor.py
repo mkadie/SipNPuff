@@ -34,8 +34,17 @@ _WHO_AM_I_VALUE  = 0xB4
 # CTRL_REG1: ODR=0100 (25 Hz), AVG=000 (no averaging) -> 0x20
 _CTRL_REG1_25HZ  = 0x20
 
-# 1 LSB = 1/4096 hPa in Mode 1.
-_HPA_PER_LSB = 1.0 / 4096.0
+# CTRL_REG2 bit 6 = FS_MODE (0: 1260 hPa "Mode 1"; 1: 4060 hPa "Mode 2").
+# Bit 4 = IF_ADD_INC (default 1) — must stay set so multi-byte reads
+# auto-increment the register pointer.
+_CTRL_REG2_MODE1 = 0x10   # IF_ADD_INC=1, FS_MODE=0
+_CTRL_REG2_MODE2 = 0x50   # IF_ADD_INC=1, FS_MODE=1 (4060 hPa full scale)
+
+# LSB scaling: 4096 LSB/hPa in Mode 1, 2048 LSB/hPa in Mode 2.
+_HPA_PER_LSB_MODE1 = 1.0 / 4096.0
+_HPA_PER_LSB_MODE2 = 1.0 / 2048.0
+# Back-compat alias (Mode 1 default).
+_HPA_PER_LSB = _HPA_PER_LSB_MODE1
 
 
 class LPS28Sensor:
@@ -49,12 +58,15 @@ class LPS28Sensor:
         verbose: print extra diagnostics on init/read errors.
     """
 
-    def __init__(self, i2c, addr=0x5C, verbose=False):
+    def __init__(self, i2c, addr=0x5C, verbose=False, full_scale_mode=1):
         self._i2c = i2c
         self._addr = addr
         self._verbose = bool(verbose)
         self._available = False
         self._baseline_kpa = 0.0
+        self._mode = 2 if int(full_scale_mode) == 2 else 1
+        self._hpa_per_lsb = (_HPA_PER_LSB_MODE2 if self._mode == 2
+                             else _HPA_PER_LSB_MODE1)
 
         if i2c is None:
             print("LPS28: no I2C bus provided")
@@ -76,14 +88,19 @@ class LPS28Sensor:
         # Enable continuous output at 25 Hz, no averaging.
         try:
             self._write_reg(_REG_CTRL_REG1, _CTRL_REG1_25HZ)
+            # Select full-scale mode (keeps IF_ADD_INC set either way).
+            self._write_reg(_REG_CTRL_REG2,
+                            _CTRL_REG2_MODE2 if self._mode == 2
+                            else _CTRL_REG2_MODE1)
         except Exception as e:
-            print("LPS28: CTRL_REG1 write failed ({})".format(e))
+            print("LPS28: CTRL_REG write failed ({})".format(e))
             return
 
         # Give the chip a few cycles to produce its first sample.
         time.sleep(0.05)
         self._available = True
-        print("LPS28: ready at 0x{:02X} (ODR=25Hz)".format(addr))
+        print("LPS28: ready at 0x{:02X} (ODR=25Hz, Mode {} = {} hPa FS)".format(
+            addr, self._mode, "4060" if self._mode == 2 else "1260"))
 
     @property
     def available(self):
@@ -111,7 +128,7 @@ class LPS28Sensor:
         raw = buf[0] | (buf[1] << 8) | (buf[2] << 16)
         if raw & 0x800000:
             raw -= 0x1000000
-        return raw * _HPA_PER_LSB
+        return raw * self._hpa_per_lsb
 
     def read_pressure_kpa(self):
         """Absolute pressure in kPa."""

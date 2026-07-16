@@ -140,6 +140,11 @@ class SipPuffDevice:
             if self._output_mode == "mouse" else None
         self._keyboard = KeyboardOutput(self._config, verbose=self._verbose) \
             if self._output_mode == "keyboard" else None
+        # Optimistic-double: the single move already fired on the first
+        # puff/sip, so a double taps the reverse key (to undo it) before
+        # the select key. Matches the classifier's optimistic_double.
+        self._optimistic_double = bool(
+            self._config.get("optimistic_double", False))
         # Pull motion-rate gating threshold from config.
         self._mouse_motion_min = int(
             self._config.get("mouse_motion_min_per_tick", 1))
@@ -794,6 +799,9 @@ class SipPuffDevice:
             # Flush any keys still held before the select so a clean
             # Select goes to the host (no stray arrow left down).
             self._keyboard.release_all()
+            # Optimistic mode already sent the puff move; undo it first.
+            if self._optimistic_double:
+                self._keyboard.tap("puff_reverse")
             self._keyboard.tap("double_puff")
             self._display.flash("puff_click")
             return
@@ -808,6 +816,8 @@ class SipPuffDevice:
             return
         if event == "double_sip":
             self._keyboard.release_all()
+            if self._optimistic_double:
+                self._keyboard.tap("sip_reverse")
             self._keyboard.tap("double_sip")
             self._display.flash("sip_click")
             return

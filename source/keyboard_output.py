@@ -35,6 +35,12 @@ _EVENT_KEY_DEFAULTS = {
     "sip_repeat":  "DOWN_ARROW",
     "double_puff": "SPACE",
     "double_sip":  "none",
+    # Reverse/undo keys for optimistic_double mode: when a second puff
+    # (or sip) turns an already-sent move into a select, this key is
+    # tapped first to cancel that move. Typically the opposite-direction
+    # key (e.g. DOWN_ARROW to undo an UP_ARROW puff). "none" = no undo.
+    "puff_reverse": "none",
+    "sip_reverse":  "none",
 }
 
 # Friendly spellings → Keycode attribute names. Anything not listed
